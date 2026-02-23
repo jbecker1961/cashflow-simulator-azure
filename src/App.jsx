@@ -182,7 +182,7 @@ export default function App(){
           {[{v:"delta",l:"Delta"},{v:"cashflow",l:"Cashflow"},{v:"cv",l:"Cur vs New"},{v:"sc",l:"Compare"},{v:"eq",l:"Equiv"}].map(t=><button key={t.v} onClick={()=>setView(t.v)} style={{padding:"8px 12px",fontSize:10,fontWeight:600,fontFamily:"'DM Sans'",border:"none",cursor:"pointer",transition:"all .2s",letterSpacing:"0.03em",textTransform:"uppercase",background:view===t.v?"#2c6fef":"transparent",color:view===t.v?"#fff":"#8a8f98"}}>{t.l}</button>)}
         </div>
         {isAuth?<div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:11,color:"#8a8f98"}}>{user?.name||user?.username||"Signed in"}</span>
+          <span style={{fontSize:11,color:"#8a8f98"}}>{user?.name && user.name !== "unknown" ? user.name : user?.username?.split("_")[0] || user?.idTokenClaims?.email || user?.idTokenClaims?.preferred_username || "Signed in"}</span>
           <button onClick={logout} style={{...authBtn,background:"#ef444418",color:"#ef6b4a"}}>Sign Out</button>
         </div>:<button onClick={login} style={{...authBtn,background:"#2c6fef",color:"#fff"}}>Sign In</button>}
       </div>

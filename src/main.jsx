@@ -6,8 +6,9 @@ import App from './App.jsx'
 
 const msalConfig = {
   auth: {
-    clientId: "ddb383fd-0592-4702-9b3c-808c35af8284",
-    authority: "https://login.microsoftonline.com/0ce83f9e-5789-4ab1-8a7b-958e68f6365f",
+    clientId: "bb019015-291a-4a4d-80b6-6806c335dc4f",
+    authority: "https://cashflowsimauth.ciamlogin.com/",
+    knownAuthorities: ["cashflowsimauth.ciamlogin.com"],
     redirectUri: window.location.origin,
   },
   cache: {

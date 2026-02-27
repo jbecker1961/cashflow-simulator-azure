@@ -251,9 +251,9 @@ function EquivView({scenarios}){
         {calcs.map(c=><th key={c.name} style={{padding:"12px",textAlign:"right",color:P.textSec,fontSize:12,fontWeight:700,borderBottom:`2px solid ${P.border}`,whiteSpace:"nowrap"}}>{c.name}<div style={{fontSize:10,color:P.textMute,fontWeight:500}}>{money(c.state.homePrice)}</div></th>)}
       </tr></thead><tbody>{calcs.map((a,i)=><tr key={a.name} style={{borderBottom:`1px solid ${P.borderLight}`}}>
         <td style={{padding:"10px 12px",color:P.text,fontWeight:600,whiteSpace:"nowrap",position:"sticky",left:0,background:P.bgCard,zIndex:1}}>{a.name}<div style={{fontSize:10,color:P.textMute,fontWeight:500}}>Δ {signedMoney(a.calc.delta)}/mo</div></td>
-        {calcs.map((b,j)=><td key={b.name} style={{padding:"10px 12px",textAlign:"right",color:mx[i][j]===null?P.borderLight:P.text,fontWeight:600,background:mx[i][j]===null?"transparent":mx[i][j]>b.state.homePrice?P.redBg:P.greenBg}}>
+        {calcs.map((b,j)=><td key={b.name} style={{padding:"10px 12px",textAlign:"right",color:mx[i][j]===null?P.borderLight:P.text,fontWeight:600,background:mx[i][j]===null?"transparent":mx[i][j]<a.state.homePrice?P.redBg:P.greenBg}}>
           {mx[i][j]===null?"—":money(mx[i][j])}
-          {mx[i][j]!==null&&<div style={{fontSize:10,fontWeight:600,color:mx[i][j]>b.state.homePrice?P.red:P.green}}>{mx[i][j]>b.state.homePrice?"+":""}{signedMoney(mx[i][j]-b.state.homePrice)}</div>}
+          {mx[i][j]!==null&&<div style={{fontSize:10,fontWeight:600,color:mx[i][j]<a.state.homePrice?P.red:P.green}}>{mx[i][j]>a.state.homePrice?"+":""}{signedMoney(mx[i][j]-a.state.homePrice)}</div>}
         </td>)}
       </tr>)}</tbody></table>
     </div>

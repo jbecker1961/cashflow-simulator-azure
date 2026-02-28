@@ -282,6 +282,7 @@ export default function App(){
   const[monthlyIncome,setMonthlyIncome]=useState(0);const[expenses,setExpenses]=useState(eE);const[sideTab,setSideTab]=useState("mortgage");const[view,setView]=useState("delta");
   const[scenarios,setScenarios]=useState(loadLocal);
   const[mobileSidebar,setMobileSidebar]=useState(false);
+  const[mobileTab,setMobileTab]=useState("inputs");
 
   useEffect(()=>{if(isAuth){setSyncing(true);setSyncStatus("Syncing...");loadCloud().then(cloud=>{if(cloud&&cloud.length>0){setScenarios(cloud);saveLocal(cloud);setSyncStatus("✓");}else{setSyncStatus("");}setSyncing(false);setTimeout(()=>setSyncStatus(""),3000);}).catch(()=>{setSyncing(false);setSyncStatus("");});};},[isAuth]);
   const persistScenarios=useCallback(list=>{saveLocal(list);if(isAuth){saveCloud(list).then(()=>{setSyncStatus("✓");setTimeout(()=>setSyncStatus(""),2000);});}},[isAuth]);
@@ -296,23 +297,39 @@ export default function App(){
   const cfC=v=>v>0?P.green:v<0?P.red:P.textMute;
 
   const viewTabs=[{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cashflow",i:"💰"},{v:"cv",l:"Current vs New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
+  const mobileTabs=[{v:"inputs",l:"Inputs",i:"✏️"},{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cash",i:"💰"},{v:"cv",l:"Cur/New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"}];
+  const onMobileTab=(v)=>{setMobileTab(v);if(v!=="inputs")setView(v);};
 
   return<div style={{fontFamily:"'Plus Jakarta Sans',sans-serif",background:P.bg,color:P.text,minHeight:"100vh"}}>
     <link href={FONTS} rel="stylesheet"/>
     <style>{`*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none}input[type=number]{-moz-appearance:textfield}::selection{background:#2563eb22}table th,table td{font-family:'Plus Jakarta Sans',sans-serif}
     .mob-toggle{display:none}
-    @media(max-width:900px){.layout{flex-direction:column!important}.sidebar{width:100%!important;max-height:none!important;position:static!important;display:none}.sidebar.open{display:block!important}.main{padding:20px 16px!important}.mob-toggle{display:flex!important}}
+    .mob-bottom{display:none}
+    .desk-tabs{display:flex}
+    .mob-inputs{display:none}
+    @media(max-width:900px){
+      .layout{flex-direction:column!important}
+      .sidebar{display:none!important}
+      .main{padding:20px 16px 90px!important}
+      .mob-toggle{display:none!important}
+      .mob-bottom{display:flex!important}
+      .desk-tabs{display:none!important}
+      .mob-inputs{display:block!important}
+      .mob-hide-main .main{display:none!important}
+      .mob-hide-main .mob-inputs{display:block!important}
+      .mob-show-main .main{display:block!important}
+      .mob-show-main .mob-inputs{display:none!important}
+    }
     ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#d4d2cc;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#b0ada6}`}</style>
 
     {/* Header */}
     <div style={{borderBottom:`1px solid ${P.border}`,padding:"12px 24px",background:P.bgCard,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
-        <button className="mob-toggle" onClick={()=>setMobileSidebar(!mobileSidebar)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",padding:4}}>☰</button>
         <span style={{fontSize:22,fontFamily:"'Fraunces',serif",fontWeight:700,color:P.text}}>Cashflow</span>
         {syncStatus&&<span style={{fontSize:10,color:syncStatus==="✓"?P.green:P.textMute,fontWeight:600,background:syncStatus==="✓"?P.greenBg:P.bgInput,padding:"2px 8px",borderRadius:10}}>{syncStatus}</span>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <div style={{display:"flex",background:P.bgInput,borderRadius:12,border:`1.5px solid ${P.border}`,overflow:"hidden",padding:3}}>
+        <div className="desk-tabs" style={{background:P.bgInput,borderRadius:12,border:`1.5px solid ${P.border}`,overflow:"hidden",padding:3}}>
           {viewTabs.map(t=><button key={t.v} onClick={()=>setView(t.v)} style={{padding:"7px 12px",fontSize:11,fontWeight:600,fontFamily:"'Plus Jakarta Sans'",border:"none",cursor:"pointer",borderRadius:9,transition:"all .25s",background:view===t.v?P.accent:"transparent",color:view===t.v?"#fff":P.textSec,boxShadow:view===t.v?"0 1px 3px rgba(37,99,235,.3)":"none"}}>{t.l}</button>)}
         </div>
         {isAuth?<div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -322,7 +339,7 @@ export default function App(){
       </div>
     </div>
 
-    <div className="layout" style={{display:"flex",minHeight:"calc(100vh - 57px)"}}>
+    <div className={`layout ${mobileTab==="inputs"?"mob-hide-main":"mob-show-main"}`} style={{display:"flex",minHeight:"calc(100vh - 57px)"}}>
       {/* Sidebar */}
       <div className={`sidebar ${mobileSidebar?"open":""}`} style={{width:380,background:P.bgSide,borderRight:`1px solid ${P.border}`,overflowY:"auto",maxHeight:"calc(100vh - 57px)",position:"sticky",top:57,padding:"4px 22px 40px"}}>
         <ScenarioMgr state={getState()} onLoad={loadState} onReset={resetAll} scenarios={scenarios} setScenarios={setScenarios} onSave={persistScenarios}/>
@@ -411,6 +428,35 @@ export default function App(){
 
         {calc.loan>0&&["delta","cashflow","cv"].includes(view)&&<div style={{marginTop:20,padding:"14px 20px",background:P.bgCard,borderRadius:14,border:`1px solid ${P.border}`,display:"flex",flexWrap:"wrap",gap:"6px 28px",fontSize:12,color:P.textSec,fontWeight:500,boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><span>Loan: <strong style={{color:P.text}}>{money(calc.loan)}</strong></span><span>Down: <strong style={{color:P.text}}>{money(downPayment)}</strong> ({homePrice>0?((downPayment/homePrice)*100).toFixed(1):0}%)</span><span>Rate: <strong style={{color:P.text}}>{pF(rate)}</strong></span><span>Type: <strong style={{color:P.text}}>{mortgageType==="30fixed"?"30yr Fixed":"7/1 IO"}</strong></span></div>}
       </div>
+
+      {/* Mobile Inputs Panel */}
+      <div className="mob-inputs" style={{display:"none",padding:"16px 20px 90px",background:P.bgSide}}>
+        {mobileTab==="inputs"&&<>
+          <ScenarioMgr state={getState()} onLoad={loadState} onReset={resetAll} scenarios={scenarios} setScenarios={setScenarios} onSave={persistScenarios}/>
+          <div style={{display:"flex",margin:"10px 0",gap:2,background:P.bgInput,borderRadius:12,padding:3,border:`1.5px solid ${P.border}`}}>
+            {[["mortgage","Mortgage"],["offsets","Offsets"],["income","Income"],["expenses","Expenses"]].map(([k,l])=><button key={k} onClick={()=>setSideTab(k)} style={{flex:1,background:sideTab===k?P.bgCard:"transparent",border:"none",borderRadius:9,color:sideTab===k?P.text:P.textMute,cursor:"pointer",padding:"9px 0",fontSize:11,fontWeight:700,fontFamily:"'Plus Jakarta Sans'",transition:"all .2s",boxShadow:sideTab===k?"0 1px 2px rgba(0,0,0,.06)":"none"}}>{l}</button>)}
+          </div>
+          {sideTab==="mortgage"&&<><Sec title="Purchase Details"><div style={{display:"flex",gap:10}}><Field label="Home Price" prefix="$" value={homePrice} onChange={setHomePrice}/><Field label="Down Payment" prefix="$" value={downPayment} onChange={setDownPayment}/></div><div style={{display:"flex",alignItems:"flex-end",gap:10}}><div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Type</label><Toggle options={[{value:"30fixed",label:"30yr Fixed"},{value:"io",label:"7/1 IO"}]} value={mortgageType} onChange={setMortgageType}/></div><Field label="Rate" suffix="%" value={rate} onChange={setRate} small/></div><div style={{display:"flex",gap:10}}><Field label="HOA" prefix="$" suffix="/mo" value={hoa} onChange={setHoa}/><Field label="PMI" prefix="$" suffix="/mo" value={pmi} onChange={setPmi}/></div></Sec>
+          <Sec title="Taxes & Insurance"><div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Property Tax</label><Toggle options={[{value:"dollar",label:"$/year"},{value:"pct",label:"% of price"}]} value={taxMode} onChange={setTaxMode}/></div>{taxMode==="dollar"?<Field label="Annual Property Tax" prefix="$" suffix="/yr" value={annualTax} onChange={setAnnualTax}/>:<Field label="Tax Rate" suffix="%" value={taxRatePct} onChange={setTaxRatePct} hint={homePrice>0?`= ${money(homePrice*taxRatePct/100)}/yr`:""}/>}<Field label="Annual Insurance" prefix="$" suffix="/yr" value={annualInsurance} onChange={setAnnualInsurance}/></Sec>
+          <Sec title="Monthly Add-ons" open={false}><DynList items={addons} setItems={setAddons} defaultName="Add-on" addLabel="Add cost"/></Sec></>}
+          {sideTab==="offsets"&&<><div style={{padding:"10px 0 6px",fontSize:13,color:P.textSec,lineHeight:1.5}}>Expenses that <strong style={{color:P.green}}>go away</strong> when you move.<Tip text="Offsets are recurring costs you currently pay that will be eliminated by your move. They reduce your net monthly cost change (delta). Examples: old mortgage payment, state income tax if moving to a no-tax state, car payments ending soon."/></div>
+          <Sec title="Old Mortgage"><Field label="Current Mortgage" prefix="$" suffix="/mo" value={oldMortgage} onChange={setOldMortgage}/></Sec>
+          <Sec title="State Tax Savings"><Field label="Current State Tax" prefix="$" suffix="/mo" value={stateTaxSavings} onChange={setStateTaxSavings}/></Sec>
+          <Sec title={<>FICA Cap Savings<Tip text="If your salary exceeds the Social Security wage base (~$168K in 2024), you stop paying FICA tax (6.2%) on income above that cap. If your move involves a salary change that crosses this threshold, the savings can be significant."/></>}><Toggle options={[{value:"dollar",label:"$/mo"},{value:"pct",label:"% salary"}]} value={ficaMode} onChange={setFicaMode}/>{ficaMode==="dollar"?<Field label="FICA Savings" prefix="$" suffix="/mo" value={ficaDollar} onChange={setFicaDollar}/>:<><Field label="FICA Rate" suffix="%" value={ficaPct} onChange={setFicaPct}/><Field label="Base Salary" prefix="$" suffix="/yr" value={ficaBaseSalary} onChange={setFicaBaseSalary} hint={ficaBaseSalary>0?`= ${money((ficaPct/100)*ficaBaseSalary/12)}/mo`:""}/></>}</Sec>
+          <Sec title="Car Payoffs"><DynList items={carPayoffs} setItems={setCarPayoffs} defaultName="Car" addLabel="Add car"/></Sec>
+          <Sec title="Other Offsets"><DynList items={otherOffsets} setItems={setOtherOffsets} defaultName="Offset" addLabel="Add offset"/></Sec></>}
+          {sideTab==="income"&&<Sec title="Household Income"><Field label="Combined Monthly Take-Home" prefix="$" suffix="/mo" value={monthlyIncome} onChange={setMonthlyIncome} hint="After-tax income"/></Sec>}
+          {sideTab==="expenses"&&<><div style={{padding:"10px 0 6px",fontSize:13,color:P.textSec,lineHeight:1.5}}>Ongoing expenses that <strong style={{color:P.amber}}>persist regardless</strong>.</div>{CATS.map(cat=><Sec key={cat.key} title={`${cat.icon} ${cat.label}`} open={false} badge={sm(expenses[cat.key]||[])}><DynList items={expenses[cat.key]||[]} setItems={items=>setExpCat(cat.key,items)} defaultName={cat.label} addLabel={`Add ${cat.label.toLowerCase()}`}/></Sec>)}</>}
+        </>}
+      </div>
+    </div>
+
+    {/* Mobile Bottom Tab Bar */}
+    <div className="mob-bottom" style={{display:"none",position:"fixed",bottom:0,left:0,right:0,background:P.bgCard,borderTop:`1px solid ${P.border}`,padding:"6px 8px env(safe-area-inset-bottom,0px)",justifyContent:"space-around",zIndex:100,boxShadow:"0 -2px 12px rgba(0,0,0,.08)"}}>
+      {mobileTabs.map(t=><button key={t.v} onClick={()=>onMobileTab(t.v)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,border:"none",background:"none",cursor:"pointer",padding:"6px 4px",minWidth:56,borderRadius:8,transition:"all .2s",backgroundColor:mobileTab===t.v?P.accentLight:"transparent"}}>
+        <span style={{fontSize:18}}>{t.i}</span>
+        <span style={{fontSize:10,fontWeight:700,color:mobileTab===t.v?P.accent:P.textMute,fontFamily:"'Plus Jakarta Sans'"}}>{t.l}</span>
+      </button>)}
     </div>
   </div>;
 }

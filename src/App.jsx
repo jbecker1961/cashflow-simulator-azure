@@ -297,7 +297,7 @@ export default function App(){
   const cfC=v=>v>0?P.green:v<0?P.red:P.textMute;
 
   const viewTabs=[{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cashflow",i:"💰"},{v:"cv",l:"Current vs New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
-  const mobileTabs=[{v:"inputs",l:"Inputs",i:"✏️"},{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cash",i:"💰"},{v:"cv",l:"Cur/New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"}];
+  const mobileTabs=[{v:"inputs",l:"Inputs",i:"✏️"},{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cash",i:"💰"},{v:"cv",l:"Cur/New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
   const onMobileTab=(v)=>{setMobileTab(v);if(v!=="inputs")setView(v);};
 
   return<div style={{fontFamily:"'Plus Jakarta Sans',sans-serif",background:P.bg,color:P.text,minHeight:"100vh"}}>

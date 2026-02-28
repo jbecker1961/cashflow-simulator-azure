@@ -300,8 +300,8 @@ export default function App(){
   return<div style={{fontFamily:"'Plus Jakarta Sans',sans-serif",background:P.bg,color:P.text,minHeight:"100vh"}}>
     <link href={FONTS} rel="stylesheet"/>
     <style>{`*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none}input[type=number]{-moz-appearance:textfield}::selection{background:#2563eb22}table th,table td{font-family:'Plus Jakarta Sans',sans-serif}
+    .mob-toggle{display:none}
     @media(max-width:900px){.layout{flex-direction:column!important}.sidebar{width:100%!important;max-height:none!important;position:static!important;display:none}.sidebar.open{display:block!important}.main{padding:20px 16px!important}.mob-toggle{display:flex!important}}
-    .mob-toggle{display:none!important}
     ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#d4d2cc;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#b0ada6}`}</style>
 
     {/* Header */}

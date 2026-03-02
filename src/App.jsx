@@ -48,7 +48,7 @@ function gD(){return{
   /* rent-out mode */
   rentalIncome:0,currentMortgage:0,
   /* rental tax calc inputs */
-  curLoanBalance:0,curLoanRate:0,curAnnualPropTax:0,curAnnualInsurance:0,curPurchasePrice:0,
+  curLoanBalance:0,curLoanRate:0,curAnnualPropTax:0,curAnnualInsurance:0,curPurchasePrice:0,curBuildingPct:80,
   rentalMaintenance:0,rentalPropMgmt:0,rentalOtherDeductions:0,
   householdTaxableIncome:0,filingStatus:"married",rentalState:"nj",
   /* shared offsets */
@@ -69,7 +69,8 @@ function calcRentalTax(s){
   const annualInterest=(s.curLoanBalance||0)*intRate; /* approx: interest-only estimate */
   const propTax=s.curAnnualPropTax||0;
   const ins=s.curAnnualInsurance||0;
-  const depreciation=((s.curPurchasePrice||0)/27.5); /* IRS residential = 27.5 yr */
+  const buildingValue=(s.curPurchasePrice||0)*((s.curBuildingPct||80)/100);
+  const depreciation=(buildingValue/27.5); /* IRS residential = 27.5 yr */
   const maint=(s.rentalMaintenance||0)*12;
   const mgmt=(s.rentalPropMgmt||0)*12;
   const otherDed=(s.rentalOtherDeductions||0)*12;
@@ -183,7 +184,8 @@ function SidebarContent({s,set,sideTab,setSideTab}){
         <div style={{fontSize:11,color:P.textMute,marginTop:-8}}>≈ {money((s.curLoanBalance||0)*(s.curLoanRate||0)/100)}/yr interest deduction</div>
         <Field label="Annual Property Tax" prefix="$" suffix="/yr" value={s.curAnnualPropTax} onChange={v=>set("curAnnualPropTax",v)}/>
         <Field label="Annual Insurance" prefix="$" suffix="/yr" value={s.curAnnualInsurance} onChange={v=>set("curAnnualInsurance",v)}/>
-        <Field label="Purchase Price (for depreciation)" prefix="$" value={s.curPurchasePrice} onChange={v=>set("curPurchasePrice",v)} hint={s.curPurchasePrice>0?`Depreciation: ${money(s.curPurchasePrice/27.5)}/yr (27.5 yr schedule)`:""}/>
+        <div style={{display:"flex",gap:10}}><Field label="Purchase Price" prefix="$" value={s.curPurchasePrice} onChange={v=>set("curPurchasePrice",v)}/><Field label="Building %" suffix="%" value={s.curBuildingPct} onChange={v=>set("curBuildingPct",v)} small/></div>
+        {s.curPurchasePrice>0&&<div style={{fontSize:11,color:P.textMute,marginTop:-8}}>Building value: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100)} → Depreciation: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100/27.5)}/yr<br/>Check your property tax assessment for the land/building split. Default 80% building.</div>}
         <div style={{display:"flex",gap:10}}><Field label="Maintenance" prefix="$" suffix="/mo" value={s.rentalMaintenance} onChange={v=>set("rentalMaintenance",v)}/><Field label="Property Mgmt" prefix="$" suffix="/mo" value={s.rentalPropMgmt} onChange={v=>set("rentalPropMgmt",v)}/></div>
         <Field label="Other Deductions" prefix="$" suffix="/mo" value={s.rentalOtherDeductions} onChange={v=>set("rentalOtherDeductions",v)} hint="Landscaping, HOA, legal, etc."/>
       </Sec>

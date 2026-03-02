@@ -46,12 +46,43 @@ function gD(){return{
   /* sell mode */
   oldMortgage:0,
   /* rent-out mode */
-  rentalIncome:0,currentMortgage:0,rentalTaxHit:0,landlordExpenses:0,
+  rentalIncome:0,currentMortgage:0,
+  /* rental tax calc inputs */
+  curLoanBalance:0,curLoanRate:0,curAnnualPropTax:0,curAnnualInsurance:0,curPurchasePrice:0,
+  rentalMaintenance:0,rentalPropMgmt:0,rentalOtherDeductions:0,
+  householdTaxableIncome:0,filingStatus:"married",rentalState:"nj",
   /* shared offsets */
   stateTaxSavings:0,ficaMode:"dollar",ficaDollar:0,ficaPct:6.2,ficaBaseSalary:0,carPayoffs:[],otherOffsets:[],
   /* income & expenses */
   monthlyIncome:0,expenses:eE()
 };}
+
+/* ── Federal tax brackets 2024 ── */
+const FED_BRACKETS_S=[{max:11600,rate:.10},{max:47150,rate:.12},{max:100525,rate:.22},{max:191950,rate:.24},{max:243725,rate:.32},{max:609350,rate:.35},{max:Infinity,rate:.37}];
+const FED_BRACKETS_M=[{max:23200,rate:.10},{max:94300,rate:.12},{max:201050,rate:.22},{max:383900,rate:.24},{max:487450,rate:.32},{max:731200,rate:.35},{max:Infinity,rate:.37}];
+const STATE_RATES={nj:.0897,ny:.0685,ct:.0699,fl:0,tx:0,ca:.1330,pa:.0307,ma:.0500,other:.05};
+function marginalRate(income,status){const b=status==="married"?FED_BRACKETS_M:FED_BRACKETS_S;for(const br of b){if(income<=br.max)return br.rate;}return .37;}
+function calcRentalTax(s){
+  const gross=(s.rentalIncome||0)*12;
+  /* deductible expenses */
+  const intRate=(s.curLoanRate||0)/100;
+  const annualInterest=(s.curLoanBalance||0)*intRate; /* approx: interest-only estimate */
+  const propTax=s.curAnnualPropTax||0;
+  const ins=s.curAnnualInsurance||0;
+  const depreciation=((s.curPurchasePrice||0)/27.5); /* IRS residential = 27.5 yr */
+  const maint=(s.rentalMaintenance||0)*12;
+  const mgmt=(s.rentalPropMgmt||0)*12;
+  const otherDed=(s.rentalOtherDeductions||0)*12;
+  const totalDeductions=annualInterest+propTax+ins+depreciation+maint+mgmt+otherDed;
+  const taxableRental=Math.max(0,gross-totalDeductions);
+  /* marginal rates */
+  const baseIncome=s.householdTaxableIncome||0;
+  const fedRate=marginalRate(baseIncome,s.filingStatus||"married");
+  const stRate=STATE_RATES[s.rentalState||"nj"]||STATE_RATES.other;
+  const annualTax=taxableRental*(fedRate+stRate);
+  const monthlyTax=annualTax/12;
+  return{annualInterest,propTax,ins,depreciation,maint,mgmt,otherDed,totalDeductions,taxableRental,fedRate,stRate,annualTax,monthlyTax,gross};
+}
 
 function cFS(s){
   let nH=0,newBreakdown=[],loan=0,pi=0,pIO=null;
@@ -70,19 +101,18 @@ function cFS(s){
   }
   /* offsets */
   const chm=s.currentHouseMode||"sell";
-  let houseOff=0,houseOffLabel="",houseOffBreakdown=[];
+  let houseOff=0,houseOffBreakdown=[],rentalTaxInfo=null;
   if(chm==="sell"){
     houseOff=s.oldMortgage||0;
-    houseOffLabel="Old Mortgage (sold)";
     houseOffBreakdown=[{label:"Old Mortgage",amount:s.oldMortgage||0}];
   } else if(chm==="rent"){
+    const mtg=s.currentMortgage||0; /* mortgage freed up — tenants cover it */
     const gross=s.rentalIncome||0;
-    const mtg=s.currentMortgage||0;
-    const tax=s.rentalTaxHit||0;
-    const exp=s.landlordExpenses||0;
-    houseOff=Math.max(0,gross-mtg-tax-exp);
-    houseOffLabel="Net Rental Income";
-    houseOffBreakdown=[{label:"Rental Income",amount:gross},{label:"− Mortgage",amount:mtg},{label:"− Tax on Rental",amount:tax},{label:"− Landlord Exp",amount:exp},{label:"Net Rental Offset",amount:houseOff}];
+    rentalTaxInfo=calcRentalTax(s);
+    const netProfit=Math.max(0,gross-mtg-rentalTaxInfo.monthlyTax);
+    /* Total offset = mortgage you no longer pay + net rental profit */
+    houseOff=mtg+netProfit;
+    houseOffBreakdown=[{label:"Mortgage Freed",amount:mtg},{label:"Rental Income",amount:gross},{label:"− Mortgage Cost",amount:mtg},{label:"− Tax on Rental",amount:rentalTaxInfo.monthlyTax},{label:"Net Rental Profit",amount:netProfit},{label:"Total House Offset",amount:houseOff}];
   }
   /* keep empty = 0 offset */
   const fO=s.ficaMode==="dollar"?(s.ficaDollar||0):((s.ficaPct||0)/100)*(s.ficaBaseSalary||0)/12;
@@ -99,7 +129,7 @@ function cFS(s){
   const cCF=(s.monthlyIncome||0)-cTO;
   const nTO=nH+tOn,nCF=(s.monthlyIncome||0)-nTO;
   const offBreakdown=[...houseOffBreakdown.filter(r=>r.label==="Old Mortgage"||r.label==="Net Rental Offset"),{label:"State Tax Savings",amount:s.stateTaxSavings||0},{label:"FICA Savings",amount:fO},{label:"Car Payoffs",amount:cO},{label:"Other Offsets",amount:oO}];
-  return{loan,pi,postIO:pIO,newHousing:nH,ficaOff:fO,carOffT:cO,otherOffT:oO,totalOff:tO,delta:d,expByCat:eBC,totalOngoing:tOn,currentTotalOut:cTO,currentCashflow:cCF,newTotalOut:nTO,newCashflow:nCF,monthlyIncome:s.monthlyIncome||0,oldMortgage:s.oldMortgage||0,stateTaxSavings:s.stateTaxSavings||0,homePrice:s.homePrice||0,downPayment:s.downPayment||0,rate:s.rate||0,mortgageType:s.mortgageType||"30fixed",hoa:s.hoa||0,pmi:s.pmi||0,scenarioMode:s.scenarioMode||"buy",currentHouseMode:chm,houseOff,houseOffBreakdown,newBreakdown,offBreakdown,curHousingExp};
+  return{loan,pi,postIO:pIO,newHousing:nH,ficaOff:fO,carOffT:cO,otherOffT:oO,totalOff:tO,delta:d,expByCat:eBC,totalOngoing:tOn,currentTotalOut:cTO,currentCashflow:cCF,newTotalOut:nTO,newCashflow:nCF,monthlyIncome:s.monthlyIncome||0,oldMortgage:s.oldMortgage||0,stateTaxSavings:s.stateTaxSavings||0,homePrice:s.homePrice||0,downPayment:s.downPayment||0,rate:s.rate||0,mortgageType:s.mortgageType||"30fixed",hoa:s.hoa||0,pmi:s.pmi||0,scenarioMode:s.scenarioMode||"buy",currentHouseMode:chm,houseOff,houseOffBreakdown,newBreakdown,offBreakdown,curHousingExp,rentalTaxInfo};
 }
 function eqHP(tD,sB){let lo=0,hi=5e7;for(let i=0;i<60;i++){const m=(lo+hi)/2;if(cFS({...sB,homePrice:m}).delta<tD)lo=m;else hi=m;}return Math.round((lo+hi)/2);}
 
@@ -141,7 +171,37 @@ function SidebarContent({s,set,sideTab,setSideTab}){
     {sideTab==="offsets"&&<><div style={{padding:"10px 0 6px",fontSize:13,color:P.textSec,lineHeight:1.5}}>Expenses that <strong style={{color:P.green}}>go away</strong> or income from your current house.<Tip text="Offsets reduce your net monthly cost change (delta). Choose what happens to your current house, plus any other expenses that go away with your move."/></div>
     <Sec title="Current House"><div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:P.textSec,display:"block",marginBottom:6}}>What happens to your current home?</label><Toggle3 options={[{value:"sell",label:"Sell it"},{value:"rent",label:"Rent it out"},{value:"empty",label:"Keep empty"}]} value={chm} onChange={v=>set("currentHouseMode",v)}/></div>
     {chm==="sell"&&<Field label="Old Mortgage" prefix="$" suffix="/mo" value={s.oldMortgage} onChange={v=>set("oldMortgage",v)} hint="This payment goes away — becomes an offset"/>}
-    {chm==="rent"&&<><Field label="Monthly Rent Income" prefix="$" suffix="/mo" value={s.rentalIncome} onChange={v=>set("rentalIncome",v)} hint="What you'll charge tenants"/><Field label="Current Mortgage" prefix="$" suffix="/mo" value={s.currentMortgage} onChange={v=>set("currentMortgage",v)} hint="You still pay this on your current house"/><Field label="Tax on Rental Income" prefix="$" suffix="/mo" value={s.rentalTaxHit} onChange={v=>set("rentalTaxHit",v)} hint="Estimated fed+state tax on net rental income"/><Field label="Landlord Expenses" prefix="$" suffix="/mo" value={s.landlordExpenses} onChange={v=>set("landlordExpenses",v)} hint="Maintenance, property mgmt, insurance, etc."/>{(s.rentalIncome>0)&&<div style={{padding:"10px 14px",background:P.greenBg,borderRadius:10,fontSize:13,color:P.green,fontWeight:600}}>Net rental offset: {money(Math.max(0,(s.rentalIncome||0)-(s.currentMortgage||0)-(s.rentalTaxHit||0)-(s.landlordExpenses||0)))}/mo</div>}</>}
+    {chm==="rent"&&<>
+      <Sec title="Rental Income"><Field label="Monthly Rent Income" prefix="$" suffix="/mo" value={s.rentalIncome} onChange={v=>set("rentalIncome",v)} hint="What you'll charge tenants"/><Field label="Current Mortgage Payment" prefix="$" suffix="/mo" value={s.currentMortgage} onChange={v=>set("currentMortgage",v)} hint="Tenants cover this — it becomes part of your offset"/></Sec>
+      <Sec title={<>Rental Tax Estimation<Tip text="We estimate your tax on rental income by calculating taxable rental profit (gross rent minus deductible expenses) and applying your marginal federal + state tax rate."/></>}>
+        <div style={{display:"flex",gap:10}}><div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Filing Status</label><Toggle options={[{value:"single",label:"Single"},{value:"married",label:"Married"}]} value={s.filingStatus||"married"} onChange={v=>set("filingStatus",v)}/></div></div>
+        <Field label="Household Taxable Income" prefix="$" suffix="/yr" value={s.householdTaxableIncome} onChange={v=>set("householdTaxableIncome",v)} hint="Your W-2 / total income before this rental"/>
+        <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>State</label><select value={s.rentalState||"nj"} onChange={e=>set("rentalState",e.target.value)} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"10px 12px",outline:"none",fontWeight:500}}><option value="nj">New Jersey (8.97%)</option><option value="ny">New York (6.85%)</option><option value="ct">Connecticut (6.99%)</option><option value="pa">Pennsylvania (3.07%)</option><option value="ca">California (13.3%)</option><option value="ma">Massachusetts (5%)</option><option value="fl">Florida (0%)</option><option value="tx">Texas (0%)</option><option value="other">Other (~5%)</option></select></div>
+      </Sec>
+      <Sec title={<>Deductible Expenses<Tip text="These reduce your taxable rental income. Mortgage interest, property tax, insurance, and depreciation are the big ones."/></>}>
+        <div style={{display:"flex",gap:10}}><Field label="Loan Balance" prefix="$" value={s.curLoanBalance} onChange={v=>set("curLoanBalance",v)}/><Field label="Loan Rate" suffix="%" value={s.curLoanRate} onChange={v=>set("curLoanRate",v)} small/></div>
+        <div style={{fontSize:11,color:P.textMute,marginTop:-8}}>≈ {money((s.curLoanBalance||0)*(s.curLoanRate||0)/100)}/yr interest deduction</div>
+        <Field label="Annual Property Tax" prefix="$" suffix="/yr" value={s.curAnnualPropTax} onChange={v=>set("curAnnualPropTax",v)}/>
+        <Field label="Annual Insurance" prefix="$" suffix="/yr" value={s.curAnnualInsurance} onChange={v=>set("curAnnualInsurance",v)}/>
+        <Field label="Purchase Price (for depreciation)" prefix="$" value={s.curPurchasePrice} onChange={v=>set("curPurchasePrice",v)} hint={s.curPurchasePrice>0?`Depreciation: ${money(s.curPurchasePrice/27.5)}/yr (27.5 yr schedule)`:""}/>
+        <div style={{display:"flex",gap:10}}><Field label="Maintenance" prefix="$" suffix="/mo" value={s.rentalMaintenance} onChange={v=>set("rentalMaintenance",v)}/><Field label="Property Mgmt" prefix="$" suffix="/mo" value={s.rentalPropMgmt} onChange={v=>set("rentalPropMgmt",v)}/></div>
+        <Field label="Other Deductions" prefix="$" suffix="/mo" value={s.rentalOtherDeductions} onChange={v=>set("rentalOtherDeductions",v)} hint="Landscaping, HOA, legal, etc."/>
+      </Sec>
+      {(()=>{const t=calcRentalTax(s);const mtg=s.currentMortgage||0;const netProfit=Math.max(0,(s.rentalIncome||0)-mtg-t.monthlyTax);return(s.rentalIncome>0)&&<div style={{background:P.bgCard,borderRadius:14,border:`1px solid ${P.border}`,padding:16,marginTop:8}}>
+        <div style={{fontSize:12,fontWeight:700,color:P.textMute,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:10}}>Rental Tax Breakdown</div>
+        <div style={{fontSize:12,color:P.textSec,display:"flex",flexDirection:"column",gap:4}}>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>Gross Rent</span><span style={{fontWeight:600}}>{money(t.gross)}/yr</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Interest Deduction</span><span style={{fontWeight:600,color:P.green}}>-{money(t.annualInterest)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Property Tax</span><span style={{fontWeight:600,color:P.green}}>-{money(t.propTax)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Insurance</span><span style={{fontWeight:600,color:P.green}}>-{money(t.ins)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Depreciation</span><span style={{fontWeight:600,color:P.green}}>-{money(t.depreciation)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Maint/Mgmt/Other</span><span style={{fontWeight:600,color:P.green}}>-{money(t.maint+t.mgmt+t.otherDed)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${P.border}`,paddingTop:6,marginTop:4}}><span style={{fontWeight:700}}>Taxable Rental Income</span><span style={{fontWeight:700}}>{money(t.taxableRental)}/yr</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>Fed Rate ({(t.fedRate*100).toFixed(0)}%) + State ({(t.stRate*100).toFixed(1)}%)</span><span style={{fontWeight:600,color:P.red}}>{money(t.annualTax)}/yr</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,color:P.red,fontSize:13}}><span>Monthly Tax Hit</span><span>{money(t.monthlyTax)}/mo</span></div>
+        </div>
+        <div style={{marginTop:12,padding:"10px 14px",background:P.greenBg,borderRadius:10,fontSize:13,color:P.green,fontWeight:700}}>Total House Offset: {money(mtg+netProfit)}/mo <span style={{fontWeight:500,fontSize:11}}>(mortgage freed {money(mtg)} + net profit {money(netProfit)})</span></div>
+      </div>;})()}</>}
     {chm==="empty"&&<div style={{padding:"10px 14px",background:P.amberBg,borderRadius:10,fontSize:13,color:P.amber,fontWeight:500}}>No offset from current house. You'll carry both housing costs.</div>}
     </Sec>
     <Sec title="State Tax Savings"><Field label="Current State Tax" prefix="$" suffix="/mo" value={s.stateTaxSavings} onChange={v=>set("stateTaxSavings",v)} hint="e.g. NJ → FL"/></Sec>

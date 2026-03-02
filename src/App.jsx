@@ -48,7 +48,9 @@ function gD(){return{
   /* rent-out mode */
   rentalIncome:0,currentMortgage:0,
   /* rental tax calc inputs */
-  curLoanBalance:0,curLoanRate:0,curAnnualPropTax:0,curAnnualInsurance:0,curPurchasePrice:0,curBuildingPct:80,
+  origLoanAmount:0,curLoanRate:0,loanStartYear:2020,loanStartMonth:12,loanTermYears:30,
+  rentalStartYear:2026,rentalStartMonth:3,
+  curAnnualPropTax:0,curAnnualInsurance:0,curPurchasePrice:0,curBuildingPct:80,
   rentalMaintenance:0,rentalPropMgmt:0,rentalOtherDeductions:0,
   householdTaxableIncome:0,filingStatus:"married",rentalState:"nj",
   /* shared offsets */
@@ -62,27 +64,62 @@ const FED_BRACKETS_S=[{max:11600,rate:.10},{max:47150,rate:.12},{max:100525,rate
 const FED_BRACKETS_M=[{max:23200,rate:.10},{max:94300,rate:.12},{max:201050,rate:.22},{max:383900,rate:.24},{max:487450,rate:.32},{max:731200,rate:.35},{max:Infinity,rate:.37}];
 const STATE_RATES={nj:.0897,ny:.0685,ct:.0699,fl:0,tx:0,ca:.1330,pa:.0307,ma:.0500,other:.05};
 function marginalRate(income,status){const b=status==="married"?FED_BRACKETS_M:FED_BRACKETS_S;for(const br of b){if(income<=br.max)return br.rate;}return .37;}
+
+/* ── Amortization helpers ── */
+function loanBalance(origLoan,annRate,termYrs,monthsElapsed){
+  if(origLoan<=0||annRate<=0)return origLoan;
+  const r=annRate/100/12,n=termYrs*12;
+  const pmt=origLoan*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1);
+  let bal=origLoan;
+  for(let i=0;i<monthsElapsed&&bal>0;i++){const intPart=bal*r;bal=bal-pmt+intPart;}
+  return Math.max(0,bal);
+}
+function annualInterestForYear(origLoan,annRate,termYrs,loanStartYear,loanStartMonth,targetYear){
+  if(origLoan<=0||annRate<=0)return 0;
+  const r=annRate/100/12,n=termYrs*12;
+  const pmt=origLoan*(r*Math.pow(1+r,n))/(Math.pow(1+r,n)-1);
+  let bal=origLoan;
+  /* advance to Jan of targetYear */
+  const monthsToJan=(targetYear-loanStartYear)*12-(loanStartMonth-1);
+  for(let i=0;i<monthsToJan&&bal>0;i++){const intP=bal*r;bal=bal-pmt+intP;}
+  /* sum interest for 12 months of targetYear */
+  let totalInt=0;
+  for(let m=0;m<12&&bal>0;m++){const intP=bal*r;totalInt+=intP;bal=bal-pmt+intP;}
+  return Math.max(0,totalInt);
+}
+
 function calcRentalTax(s){
   const gross=(s.rentalIncome||0)*12;
-  /* deductible expenses */
-  const intRate=(s.curLoanRate||0)/100;
-  const annualInterest=(s.curLoanBalance||0)*intRate; /* approx: interest-only estimate */
+  const now=new Date();const curYear=now.getFullYear();
+  /* interest deduction — actual interest paid this calendar year */
+  const annualInterest=annualInterestForYear(s.origLoanAmount||0,s.curLoanRate||0,s.loanTermYears||30,s.loanStartYear||2020,s.loanStartMonth||12,curYear);
+  /* current balance for display */
+  const lsY=s.loanStartYear||2020,lsM=s.loanStartMonth||12;
+  const monthsElapsed=(curYear-lsY)*12+(now.getMonth()+1)-lsM;
+  const curBalance=loanBalance(s.origLoanAmount||0,s.curLoanRate||0,s.loanTermYears||30,Math.max(0,monthsElapsed));
+  /* depreciation with mid-month convention */
+  const buildingValue=(s.curPurchasePrice||0)*((s.curBuildingPct||80)/100);
+  const fullAnnualDepr=buildingValue/27.5;
+  const rsY=s.rentalStartYear||curYear,rsM=s.rentalStartMonth||(now.getMonth()+1);
+  let depreciation=fullAnnualDepr;
+  if(curYear===rsY){/* first year proration: mid-month convention */
+    const monthsInService=(12-rsM)+0.5;/* 0.5 for the start month */
+    depreciation=fullAnnualDepr*(monthsInService/12);
+  }
   const propTax=s.curAnnualPropTax||0;
   const ins=s.curAnnualInsurance||0;
-  const buildingValue=(s.curPurchasePrice||0)*((s.curBuildingPct||80)/100);
-  const depreciation=(buildingValue/27.5); /* IRS residential = 27.5 yr */
   const maint=(s.rentalMaintenance||0)*12;
   const mgmt=(s.rentalPropMgmt||0)*12;
   const otherDed=(s.rentalOtherDeductions||0)*12;
   const totalDeductions=annualInterest+propTax+ins+depreciation+maint+mgmt+otherDed;
   const taxableRental=Math.max(0,gross-totalDeductions);
-  /* marginal rates */
   const baseIncome=s.householdTaxableIncome||0;
   const fedRate=marginalRate(baseIncome,s.filingStatus||"married");
   const stRate=STATE_RATES[s.rentalState||"nj"]||STATE_RATES.other;
   const annualTax=taxableRental*(fedRate+stRate);
   const monthlyTax=annualTax/12;
-  return{annualInterest,propTax,ins,depreciation,maint,mgmt,otherDed,totalDeductions,taxableRental,fedRate,stRate,annualTax,monthlyTax,gross};
+  const isFirstYear=curYear===rsY;
+  return{annualInterest,propTax,ins,depreciation,fullAnnualDepr,maint,mgmt,otherDed,totalDeductions,taxableRental,fedRate,stRate,annualTax,monthlyTax,gross,curBalance,isFirstYear,rsM,rsY};
 }
 
 function cFS(s){
@@ -174,29 +211,34 @@ function SidebarContent({s,set,sideTab,setSideTab}){
     {chm==="sell"&&<Field label="Old Mortgage" prefix="$" suffix="/mo" value={s.oldMortgage} onChange={v=>set("oldMortgage",v)} hint="This payment goes away — becomes an offset"/>}
     {chm==="rent"&&<>
       <Sec title="Rental Income"><Field label="Monthly Rent Income" prefix="$" suffix="/mo" value={s.rentalIncome} onChange={v=>set("rentalIncome",v)} hint="What you'll charge tenants"/><Field label="Current Mortgage Payment" prefix="$" suffix="/mo" value={s.currentMortgage} onChange={v=>set("currentMortgage",v)} hint="Tenants cover this — it becomes part of your offset"/></Sec>
-      <Sec title={<>Rental Tax Estimation<Tip text="We estimate your tax on rental income by calculating taxable rental profit (gross rent minus deductible expenses) and applying your marginal federal + state tax rate."/></>}>
+      <Sec title={<>Rental Tax Estimation<Tip text="We calculate your tax on rental income using actual amortization for interest deductions and IRS mid-month convention for depreciation proration."/></>}>
         <div style={{display:"flex",gap:10}}><div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Filing Status</label><Toggle options={[{value:"single",label:"Single"},{value:"married",label:"Married"}]} value={s.filingStatus||"married"} onChange={v=>set("filingStatus",v)}/></div></div>
         <Field label="Household Taxable Income" prefix="$" suffix="/yr" value={s.householdTaxableIncome} onChange={v=>set("householdTaxableIncome",v)} hint="Your W-2 / total income before this rental"/>
         <div style={{display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>State</label><select value={s.rentalState||"nj"} onChange={e=>set("rentalState",e.target.value)} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"10px 12px",outline:"none",fontWeight:500}}><option value="nj">New Jersey (8.97%)</option><option value="ny">New York (6.85%)</option><option value="ct">Connecticut (6.99%)</option><option value="pa">Pennsylvania (3.07%)</option><option value="ca">California (13.3%)</option><option value="ma">Massachusetts (5%)</option><option value="fl">Florida (0%)</option><option value="tx">Texas (0%)</option><option value="other">Other (~5%)</option></select></div>
       </Sec>
-      <Sec title={<>Deductible Expenses<Tip text="These reduce your taxable rental income. Mortgage interest, property tax, insurance, and depreciation are the big ones."/></>}>
-        <div style={{display:"flex",gap:10}}><Field label="Loan Balance" prefix="$" value={s.curLoanBalance} onChange={v=>set("curLoanBalance",v)}/><Field label="Loan Rate" suffix="%" value={s.curLoanRate} onChange={v=>set("curLoanRate",v)} small/></div>
-        <div style={{fontSize:11,color:P.textMute,marginTop:-8}}>≈ {money((s.curLoanBalance||0)*(s.curLoanRate||0)/100)}/yr interest deduction</div>
+      <Sec title={<>Current Loan Details<Tip text="Used to calculate the exact interest deduction based on your amortization schedule. We compute your current balance and this year's interest from the original loan."/></>}>
+        <Field label="Original Loan Amount" prefix="$" value={s.origLoanAmount} onChange={v=>set("origLoanAmount",v)}/>
+        <div style={{display:"flex",gap:10}}><Field label="Loan Rate" suffix="%" value={s.curLoanRate} onChange={v=>set("curLoanRate",v)}/><Field label="Term" suffix="yrs" value={s.loanTermYears||30} onChange={v=>set("loanTermYears",v)} small/></div>
+        <div style={{display:"flex",gap:10}}><div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Loan Start Month</label><select value={s.loanStartMonth||12} onChange={e=>set("loanStartMonth",Number(e.target.value))} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"10px 12px",outline:"none",fontWeight:500}}>{[1,2,3,4,5,6,7,8,9,10,11,12].map(m=><option key={m} value={m}>{["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]}</option>)}</select></div><Field label="Loan Start Year" value={s.loanStartYear||2020} onChange={v=>set("loanStartYear",v)} small/></div>
+        {(s.origLoanAmount>0&&s.curLoanRate>0)&&<div style={{padding:"8px 12px",background:P.bgInput,borderRadius:10,fontSize:12,color:P.textSec}}>Est. current balance: <strong style={{color:P.text}}>{money(calcRentalTax(s).curBalance)}</strong> · This year's interest: <strong style={{color:P.text}}>{money(calcRentalTax(s).annualInterest)}</strong></div>}
+      </Sec>
+      <Sec title={<>Depreciation & Deductions<Tip text="Depreciation uses IRS 27.5-year straight-line on the building portion. First year is prorated using mid-month convention based on when you start renting."/></>}>
+        <div style={{display:"flex",gap:10}}><div style={{flex:1,display:"flex",flexDirection:"column",gap:5}}><label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Rental Start Month</label><select value={s.rentalStartMonth||3} onChange={e=>set("rentalStartMonth",Number(e.target.value))} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"10px 12px",outline:"none",fontWeight:500}}>{[1,2,3,4,5,6,7,8,9,10,11,12].map(m=><option key={m} value={m}>{["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]}</option>)}</select></div><Field label="Rental Start Year" value={s.rentalStartYear||2026} onChange={v=>set("rentalStartYear",v)} small/></div>
+        <div style={{display:"flex",gap:10}}><Field label="Purchase Price" prefix="$" value={s.curPurchasePrice} onChange={v=>set("curPurchasePrice",v)}/><Field label="Building %" suffix="%" value={s.curBuildingPct} onChange={v=>set("curBuildingPct",v)} small/></div>
+        {s.curPurchasePrice>0&&<div style={{fontSize:11,color:P.textMute}}>Building: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100)} · Full annual depr: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100/27.5)}/yr{(()=>{const t=calcRentalTax(s);return t.isFirstYear?` · Year 1 (prorated from ${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][(t.rsM||3)-1]}): ${money(t.depreciation)}`:""})()}</div>}
         <Field label="Annual Property Tax" prefix="$" suffix="/yr" value={s.curAnnualPropTax} onChange={v=>set("curAnnualPropTax",v)}/>
         <Field label="Annual Insurance" prefix="$" suffix="/yr" value={s.curAnnualInsurance} onChange={v=>set("curAnnualInsurance",v)}/>
-        <div style={{display:"flex",gap:10}}><Field label="Purchase Price" prefix="$" value={s.curPurchasePrice} onChange={v=>set("curPurchasePrice",v)}/><Field label="Building %" suffix="%" value={s.curBuildingPct} onChange={v=>set("curBuildingPct",v)} small/></div>
-        {s.curPurchasePrice>0&&<div style={{fontSize:11,color:P.textMute,marginTop:-8}}>Building value: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100)} → Depreciation: {money(s.curPurchasePrice*(s.curBuildingPct||80)/100/27.5)}/yr<br/>Check your property tax assessment for the land/building split. Default 80% building.</div>}
         <div style={{display:"flex",gap:10}}><Field label="Maintenance" prefix="$" suffix="/mo" value={s.rentalMaintenance} onChange={v=>set("rentalMaintenance",v)}/><Field label="Property Mgmt" prefix="$" suffix="/mo" value={s.rentalPropMgmt} onChange={v=>set("rentalPropMgmt",v)}/></div>
         <Field label="Other Deductions" prefix="$" suffix="/mo" value={s.rentalOtherDeductions} onChange={v=>set("rentalOtherDeductions",v)} hint="Landscaping, HOA, legal, etc."/>
       </Sec>
       {(()=>{const t=calcRentalTax(s);const mtg=s.currentMortgage||0;const netProfit=Math.max(0,(s.rentalIncome||0)-mtg-t.monthlyTax);return(s.rentalIncome>0)&&<div style={{background:P.bgCard,borderRadius:14,border:`1px solid ${P.border}`,padding:16,marginTop:8}}>
-        <div style={{fontSize:12,fontWeight:700,color:P.textMute,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:10}}>Rental Tax Breakdown</div>
+        <div style={{fontSize:12,fontWeight:700,color:P.textMute,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:10}}>Rental Tax Breakdown {t.isFirstYear&&<span style={{color:P.amber,fontWeight:600}}>(Year 1 — prorated)</span>}</div>
         <div style={{fontSize:12,color:P.textSec,display:"flex",flexDirection:"column",gap:4}}>
           <div style={{display:"flex",justifyContent:"space-between"}}><span>Gross Rent</span><span style={{fontWeight:600}}>{money(t.gross)}/yr</span></div>
-          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Interest Deduction</span><span style={{fontWeight:600,color:P.green}}>-{money(t.annualInterest)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Mortgage Interest</span><span style={{fontWeight:600,color:P.green}}>-{money(t.annualInterest)}</span></div>
           <div style={{display:"flex",justifyContent:"space-between"}}><span>− Property Tax</span><span style={{fontWeight:600,color:P.green}}>-{money(t.propTax)}</span></div>
           <div style={{display:"flex",justifyContent:"space-between"}}><span>− Insurance</span><span style={{fontWeight:600,color:P.green}}>-{money(t.ins)}</span></div>
-          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Depreciation</span><span style={{fontWeight:600,color:P.green}}>-{money(t.depreciation)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between"}}><span>− Depreciation{t.isFirstYear?" (prorated)":""}</span><span style={{fontWeight:600,color:P.green}}>-{money(t.depreciation)}</span></div>
           <div style={{display:"flex",justifyContent:"space-between"}}><span>− Maint/Mgmt/Other</span><span style={{fontWeight:600,color:P.green}}>-{money(t.maint+t.mgmt+t.otherDed)}</span></div>
           <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${P.border}`,paddingTop:6,marginTop:4}}><span style={{fontWeight:700}}>Taxable Rental Income</span><span style={{fontWeight:700}}>{money(t.taxableRental)}/yr</span></div>
           <div style={{display:"flex",justifyContent:"space-between"}}><span>Fed Rate ({(t.fedRate*100).toFixed(0)}%) + State ({(t.stRate*100).toFixed(1)}%)</span><span style={{fontWeight:600,color:P.red}}>{money(t.annualTax)}/yr</span></div>

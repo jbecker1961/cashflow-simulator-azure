@@ -291,76 +291,117 @@ function SidebarContent({s,set,sideTab,setSideTab}){
 function TimelineView({baseCalc,baseState}){
   const[maxYear,setMaxYear]=useState(10);
   const[events,setEvents]=useState([]);
-  const[chartMode,setChartMode]=useState("surplus");
-  const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,type:"expense_add",label:"",amount:0}]);
+
+  /* Build list of actual scenario items for dropdowns */
+  const scenarioItems=useMemo(()=>{
+    const items=[];
+    /* Expenses */
+    const cats=baseState.expenses||{};
+    Object.keys(cats).forEach(catKey=>{
+      const cat=CATS.find(c=>c.key===catKey);
+      (cats[catKey]||[]).forEach(item=>{
+        if(item.amount>0)items.push({group:"Expense",label:`${cat?.icon||""} ${item.name}`,amount:item.amount,action:"remove_expense"});
+      });
+    });
+    /* Offsets */
+    if(baseCalc.houseOff>0)items.push({group:"Offset",label:"House Offset",amount:baseCalc.houseOff,action:"change_offset"});
+    if(baseCalc.stateTaxSavings>0)items.push({group:"Offset",label:"State Tax Savings",amount:baseCalc.stateTaxSavings,action:"change_offset"});
+    if(baseCalc.ficaOff>0)items.push({group:"Offset",label:"FICA Savings",amount:baseCalc.ficaOff,action:"change_offset"});
+    (baseState.carPayoffs||[]).forEach(c=>{if(c.amount>0)items.push({group:"Offset",label:`Car: ${c.name}`,amount:c.amount,action:"remove_offset"});});
+    (baseState.otherOffsets||[]).forEach(o=>{if(o.amount>0)items.push({group:"Offset",label:`Offset: ${o.name}`,amount:o.amount,action:"remove_offset"});});
+    /* Income */
+    items.push({group:"Income",label:"Monthly Income",amount:baseCalc.monthlyIncome,action:"change_income"});
+    return items;
+  },[baseCalc,baseState]);
+
+  const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,source:"custom",action:"add_expense",label:"",amount:0}]);
   const rmEvent=id=>setEvents(p=>p.filter(e=>e.id!==id));
   const upEvent=(id,k,v)=>setEvents(p=>p.map(e=>e.id===id?{...e,[k]:v}:e));
-  const eventTypes=[{value:"income_change",label:"Income Change",icon:"💵"},{value:"expense_add",label:"New Expense",icon:"📋"},{value:"expense_end",label:"Expense Ends",icon:"✅"},{value:"offset_change",label:"Offset Change",icon:"🔄"},{value:"rate_change",label:"Rate Change",icon:"📉"},{value:"custom",label:"Custom",icon:"⚙️"}];
 
-  /* compute year-by-year cashflow */
+  const pickSource=(evId,sourceIdx)=>{
+    if(sourceIdx==="custom"){
+      upEvent(evId,"source","custom");
+      upEvent(evId,"action","add_expense");
+      upEvent(evId,"label","");
+      upEvent(evId,"amount",0);
+    } else {
+      const item=scenarioItems[Number(sourceIdx)];
+      if(item){
+        setEvents(p=>p.map(e=>e.id===evId?{...e,source:sourceIdx,action:item.action,label:item.label,amount:item.amount}:e));
+      }
+    }
+  };
+
+  /* compute year-by-year */
   const yearData=useMemo(()=>{
     const data=[];
     let runIncome=baseCalc.monthlyIncome;
     let runHousing=baseCalc.newHousing;
-    let runOngoing=baseCalc.totalOngoing;
     let runOffsets=baseCalc.totalOff;
-    let extraItems=[]; /* {label,amount,endYear?} */
-    let runRate=baseState.rate||0;
+    let runOngoing=baseCalc.totalOngoing;
+    let extraExpenses=[]; /* {label,amount,endYear?} */
+    let extraOffsets=[]; /* {label,amount,endYear?} */
     for(let yr=1;yr<=maxYear;yr++){
-      /* apply events for this year */
       const yrEvents=events.filter(e=>e.year===yr);
       for(const ev of yrEvents){
-        if(ev.type==="income_change") runIncome+=(ev.amount||0);
-        else if(ev.type==="expense_add") extraItems.push({label:ev.label||"Expense",amount:ev.amount||0,endYear:ev.endYear||null});
-        else if(ev.type==="expense_end"){
-          const idx=extraItems.findIndex(x=>x.label===ev.label);
-          if(idx>=0)extraItems.splice(idx,1);
-          else runOngoing-=Math.abs(ev.amount||0);
-        }
-        else if(ev.type==="offset_change") runOffsets+=(ev.amount||0);
-        else if(ev.type==="rate_change"){
-          runRate=ev.amount||runRate;
-          const isBuy=(baseState.scenarioMode||"buy")==="buy";
-          if(isBuy){
-            const loan=Math.max(0,(baseState.homePrice||0)-(baseState.downPayment||0));
-            const newPI=baseState.mortgageType==="30fixed"?fPI(loan,runRate,30):ioP(loan,runRate);
-            const oldPI=baseCalc.pi||0;
-            runHousing=runHousing-oldPI+newPI;
-          }
-        }
-        else if(ev.type==="custom"){
-          if((ev.amount||0)>0)extraItems.push({label:ev.label||"Custom",amount:ev.amount||0,endYear:ev.endYear||null});
-          else runIncome+=(ev.amount||0);
+        const a=ev.action||"add_expense";
+        const amt=Math.abs(ev.amount||0);
+        if(a==="remove_expense"){
+          /* find and remove from ongoing or extras */
+          const eidx=extraExpenses.findIndex(x=>x.label===ev.label);
+          if(eidx>=0)extraExpenses.splice(eidx,1);
+          else runOngoing-=amt;
+        } else if(a==="add_expense"){
+          extraExpenses.push({label:ev.label||"Expense",amount:amt,endYear:ev.endYear||null});
+        } else if(a==="remove_offset"){
+          const oidx=extraOffsets.findIndex(x=>x.label===ev.label);
+          if(oidx>=0)extraOffsets.splice(oidx,1);
+          else runOffsets-=amt;
+        } else if(a==="add_offset"){
+          extraOffsets.push({label:ev.label||"Offset",amount:amt,endYear:ev.endYear||null});
+        } else if(a==="change_offset"){
+          /* replace: remove old amount, add new */
+          runOffsets=runOffsets-amt+(ev.newAmount||0);
+        } else if(a==="change_income"){
+          runIncome+=(ev.amount||0); /* positive = raise, negative = cut */
+        } else if(a==="income_raise"){
+          runIncome+=amt;
+        } else if(a==="income_cut"){
+          runIncome-=amt;
         }
       }
-      /* remove expired extras */
-      extraItems=extraItems.filter(x=>!x.endYear||yr<=x.endYear);
-      const extraTotal=extraItems.reduce((s,x)=>s+x.amount,0);
-      const totalOut=runHousing+Math.max(0,runOngoing)+extraTotal;
+      extraExpenses=extraExpenses.filter(x=>!x.endYear||yr<=x.endYear);
+      extraOffsets=extraOffsets.filter(x=>!x.endYear||yr<=x.endYear);
+      const xExpTotal=extraExpenses.reduce((s,x)=>s+x.amount,0);
+      const xOffTotal=extraOffsets.reduce((s,x)=>s+x.amount,0);
+      const totalOffsets=Math.max(0,runOffsets)+xOffTotal;
+      const housing=runHousing;
+      const ongoing=Math.max(0,runOngoing)+xExpTotal;
+      const delta=housing-totalOffsets;
+      const totalOut=housing+ongoing;
       const surplus=runIncome-totalOut;
-      const delta=runHousing-runOffsets;
-      data.push({year:yr,income:runIncome,housing:runHousing,ongoing:Math.max(0,runOngoing),extras:extraTotal,extraItems:[...extraItems],totalOut,surplus,offsets:runOffsets,delta,events:yrEvents});
+      data.push({year:yr,income:runIncome,housing,offsets:totalOffsets,delta,ongoing,totalOut,surplus,events:yrEvents});
     }
     return data;
   },[maxYear,events,baseCalc,baseState]);
 
-  /* SVG Chart */
-  const chartW=700,chartH=260,padL=70,padR=20,padT=30,padB=40;
+  /* Dual-line SVG Chart */
+  const chartW=700,chartH=280,padL=70,padR=20,padT=30,padB=40;
   const plotW=chartW-padL-padR,plotH=chartH-padT-padB;
-  const chartVal=d=>chartMode==="surplus"?d.surplus:chartMode==="delta"?d.delta:d.offsets;
-  const chartLabel=chartMode==="surplus"?"Monthly Surplus":chartMode==="delta"?"Monthly Delta (Housing − Offsets)":"Monthly Offsets";
-  const chartColor=chartMode==="offsets"?P.green:P.accent;
-  const vals=yearData.map(chartVal);
-  const minV=Math.min(...vals,0),maxV=Math.max(...vals,1);
+  const allVals=[...yearData.map(d=>d.delta),...yearData.map(d=>d.surplus)];
+  const minV=Math.min(...allVals,0),maxV=Math.max(...allVals,1);
   const range=maxV-minV||1;
   const xStep=plotW/Math.max(yearData.length-1,1);
   const toY=v=>padT+plotH-(((v-minV)/range)*plotH);
-  const toX=(i)=>padL+i*xStep;
-  const linePts=yearData.map((d,i)=>`${toX(i)},${toY(chartVal(d))}`).join(" ");
+  const toX=i=>padL+i*xStep;
+  const deltaLine=yearData.map((d,i)=>`${toX(i)},${toY(d.delta)}`).join(" ");
+  const surplusLine=yearData.map((d,i)=>`${toX(i)},${toY(d.surplus)}`).join(" ");
   const zeroY=toY(0);
 
+  const actionOpts=[{value:"add_expense",label:"+ Add Expense"},{value:"remove_expense",label:"− Remove Expense"},{value:"add_offset",label:"+ Add Offset"},{value:"remove_offset",label:"− Remove Offset"},{value:"income_raise",label:"↑ Income Raise"},{value:"income_cut",label:"↓ Income Cut"}];
+
   return<div>
-    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Start with your current scenario as Year 1, then add life events at future years. Toggle between Surplus (full cashflow), Delta (housing − offsets), or Offsets view.</InfoBanner>
+    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Your current delta is <strong>{signedMoney(baseCalc.delta)}/mo</strong> and surplus is <strong>{signedMoney(baseCalc.newCashflow)}/mo</strong>. Add life events to see how both change year over year. Select from your actual scenario items or add custom ones.</InfoBanner>
     <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:24,flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
         <label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Project out</label>
@@ -368,27 +409,29 @@ function TimelineView({baseCalc,baseState}){
           {[3,5,7,10,15,20,25,30].map(n=><option key={n} value={n}>{n} years</option>)}
         </select>
       </div>
-      <Toggle3 options={[{value:"surplus",label:"💰 Surplus"},{value:"delta",label:"📊 Delta"},{value:"offsets",label:"🔄 Offsets"}]} value={chartMode} onChange={setChartMode}/>
       <button onClick={addEvent} style={{border:"none",cursor:"pointer",fontFamily:"'Plus Jakarta Sans'",fontSize:12,fontWeight:600,borderRadius:10,padding:"8px 18px",background:P.accentLight,color:P.accent}}>+ Add Life Event</button>
     </div>
 
-    {/* Events editor */}
     {events.length>0&&<div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:20,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
       <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 14px"}}>Life Events</h3>
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {events.map(ev=><div key={ev.id} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",padding:"10px 12px",background:P.bgInput,borderRadius:12}}>
-          <select value={ev.year} onChange={e=>upEvent(ev.id,"year",Number(e.target.value))} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:600,width:70}}>
+        {events.map(ev=><div key={ev.id} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",padding:"10px 12px",background:P.bgInput,borderRadius:12}}>
+          <select value={ev.year} onChange={e=>upEvent(ev.id,"year",Number(e.target.value))} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:600,width:65}}>
             {Array.from({length:maxYear},(_,i)=>i+1).map(y=><option key={y} value={y}>Yr {y}</option>)}
           </select>
-          <select value={ev.type} onChange={e=>upEvent(ev.id,"type",e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:500,width:140}}>
-            {eventTypes.map(t=><option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
+          <select value={ev.source||"custom"} onChange={e=>pickSource(ev.id,e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:500,maxWidth:160}}>
+            <option value="custom">✏️ Custom</option>
+            {scenarioItems.map((item,idx)=><option key={idx} value={idx}>{item.group}: {item.label} ({money(item.amount)}/mo)</option>)}
           </select>
-          <input value={ev.label||""} onChange={e=>upEvent(ev.id,"label",e.target.value)} placeholder={ev.type==="expense_end"?"Which expense?":"Description"} style={{flex:1,minWidth:100,background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 10px",outline:"none",fontWeight:500}}/>
-          <div style={{display:"flex",alignItems:"center",background:P.bgCard,borderRadius:8,border:`1.5px solid ${P.border}`,overflow:"hidden",width:110,height:34}}>
-            <span style={{padding:"0 0 0 8px",color:P.textMute,fontSize:12,fontWeight:600}}>{ev.type==="rate_change"?"%":"$"}</span>
+          {ev.source==="custom"&&<select value={ev.action||"add_expense"} onChange={e=>upEvent(ev.id,"action",e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:500,width:130}}>
+            {actionOpts.map(a=><option key={a.value} value={a.value}>{a.label}</option>)}
+          </select>}
+          {ev.source==="custom"&&<input value={ev.label||""} onChange={e=>upEvent(ev.id,"label",e.target.value)} placeholder="Description" style={{flex:1,minWidth:80,background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 10px",outline:"none",fontWeight:500}}/>}
+          <div style={{display:"flex",alignItems:"center",background:P.bgCard,borderRadius:8,border:`1.5px solid ${P.border}`,overflow:"hidden",width:100,height:32}}>
+            <span style={{padding:"0 0 0 6px",color:P.textMute,fontSize:11,fontWeight:600}}>$</span>
             <NumInput value={ev.amount||0} onChange={v=>upEvent(ev.id,"amount",v)} style={{fontSize:12,padding:"0 6px"}}/>
           </div>
-          {(ev.type==="expense_add"||ev.type==="custom")&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:11,color:P.textMute}}>ends yr</span><select value={ev.endYear||""} onChange={e=>upEvent(ev.id,"endYear",e.target.value?Number(e.target.value):null)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"4px 6px",outline:"none",width:60}}>
+          {(ev.action==="add_expense"||ev.action==="add_offset")&&<div style={{display:"flex",alignItems:"center",gap:3}}><span style={{fontSize:10,color:P.textMute}}>ends</span><select value={ev.endYear||""} onChange={e=>upEvent(ev.id,"endYear",e.target.value?Number(e.target.value):null)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:10,fontFamily:"'Plus Jakarta Sans'",padding:"3px 4px",outline:"none",width:55}}>
             <option value="">never</option>{Array.from({length:maxYear},(_,i)=>i+1).filter(y=>y>=ev.year).map(y=><option key={y} value={y}>Yr {y}</option>)}
           </select></div>}
           <button onClick={()=>rmEvent(ev.id)} style={{background:"none",border:"none",color:P.textMute,cursor:"pointer",fontSize:18,padding:2,borderRadius:4}} onMouseEnter={e=>e.target.style.color=P.red} onMouseLeave={e=>e.target.style.color=P.textMute}>×</button>
@@ -396,54 +439,53 @@ function TimelineView({baseCalc,baseState}){
       </div>
     </div>}
 
-    {/* Chart */}
+    {/* Dual Chart */}
     <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:24,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
-      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>{chartLabel} Over Time</h3>
+      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>Delta & Surplus Over Time</h3>
       <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width:"100%",maxWidth:chartW,height:"auto",fontFamily:"'Plus Jakarta Sans'"}}>
-        {/* grid lines */}
         {[0,1,2,3,4].map(i=>{const v=minV+(range*(i/4));return<g key={i}><line x1={padL} x2={chartW-padR} y1={toY(v)} y2={toY(v)} stroke={P.borderLight} strokeWidth="1"/><text x={padL-8} y={toY(v)+4} textAnchor="end" fontSize="10" fill={P.textMute}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text></g>;})}
-        {/* zero line */}
-        {minV<0&&<line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.border} strokeWidth="1.5" strokeDasharray="4"/>}
-        {/* area */}
-        <polygon points={`${toX(0)},${zeroY} ${linePts} ${toX(yearData.length-1)},${zeroY}`} fill={chartMode==="offsets"?P.green:chartColor} opacity="0.1"/>
-        {/* line */}
-        <polyline points={linePts} fill="none" stroke={chartColor} strokeWidth="2.5" strokeLinejoin="round"/>
-        {/* dots + labels */}
-        {yearData.map((d,i)=>{const v=chartVal(d);const dotCol=chartMode==="offsets"?P.green:v>=0?P.green:P.red;return<g key={i}>
-          <circle cx={toX(i)} cy={toY(v)} r="4" fill={dotCol} stroke={P.bgCard} strokeWidth="2"/>
+        {minV<0&&maxV>0&&<line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.text} strokeWidth="1" strokeDasharray="4" opacity="0.3"/>}
+        {/* Delta line - blue */}
+        <polyline points={deltaLine} fill="none" stroke={P.accent} strokeWidth="2.5" strokeLinejoin="round"/>
+        {/* Surplus line - purple */}
+        <polyline points={surplusLine} fill="none" stroke={P.purple} strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="6 3"/>
+        {/* Delta dots */}
+        {yearData.map((d,i)=><g key={`d${i}`}>
+          <circle cx={toX(i)} cy={toY(d.delta)} r="4" fill={d.delta<=0?P.green:P.red} stroke={P.bgCard} strokeWidth="2"/>
           <text x={toX(i)} y={chartH-8} textAnchor="middle" fontSize="10" fill={P.textMute}>Y{d.year}</text>
-          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(v)-12} textAnchor="middle" fontSize="10" fontWeight="600" fill={dotCol}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text>}
-        </g>;})}
-        {/* event markers */}
-        {yearData.filter(d=>d.events.length>0).map((d,i)=><g key={`ev${i}`}>
-          <line x1={toX(d.year-1)} x2={toX(d.year-1)} y1={padT} y2={chartH-padB} stroke={P.amber} strokeWidth="1" strokeDasharray="3" opacity="0.5"/>
+          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.delta)-12} textAnchor="middle" fontSize="9" fontWeight="700" fill={d.delta<=0?P.green:P.red}>{signedMoney(d.delta)}</text>}
         </g>)}
+        {/* Surplus dots */}
+        {yearData.map((d,i)=><g key={`s${i}`}>
+          <circle cx={toX(i)} cy={toY(d.surplus)} r="3" fill={P.purple} stroke={P.bgCard} strokeWidth="1.5"/>
+          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.surplus)+16} textAnchor="middle" fontSize="9" fontWeight="600" fill={P.purple}>{signedMoney(d.surplus)}</text>}
+        </g>)}
+        {/* event markers */}
+        {yearData.filter(d=>d.events.length>0).map(d=><line key={`e${d.year}`} x1={toX(d.year-1)} x2={toX(d.year-1)} y1={padT} y2={chartH-padB} stroke={P.amber} strokeWidth="1" strokeDasharray="3" opacity="0.5"/>)}
       </svg>
-      <div style={{display:"flex",gap:16,marginTop:8,fontSize:11,color:P.textMute}}>
-        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:12,height:3,background:P.accent,borderRadius:2,display:"inline-block"}}/>Surplus</span>
-        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",background:P.green,display:"inline-block"}}/>Positive</span>
-        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",background:P.red,display:"inline-block"}}/>Negative</span>
-        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:12,height:0,borderTop:`2px dashed ${P.amber}`,display:"inline-block"}}/>Event</span>
+      <div style={{display:"flex",gap:20,marginTop:10,fontSize:11,color:P.textMute}}>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:3,background:P.accent,borderRadius:2,display:"inline-block"}}/>Delta (housing − offsets)</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:0,borderTop:`2.5px dashed ${P.purple}`,display:"inline-block"}}/>Surplus (income − all out)</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:0,borderTop:`2px dashed ${P.amber}`,display:"inline-block"}}/>Life event</span>
       </div>
     </div>
 
-    {/* Year-by-year table */}
+    {/* Table */}
     <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:0,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,fontFamily:"'Plus Jakarta Sans'"}}>
         <thead><tr style={{borderBottom:`2px solid ${P.border}`}}>
-          {["Year","Income","Housing","Offsets","Delta","Ongoing","Extras","Total Out","Surplus","Events"].map((h,i)=><th key={i} style={{padding:"12px 10px",textAlign:i>=1&&i<=8?"right":"left",color:P.textMute,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>)}
+          {["Year","Income","Housing","Offsets","Delta","Ongoing","Total Out","Surplus","Events"].map((h,i)=><th key={i} style={{padding:"12px 10px",textAlign:i>=1&&i<=7?"right":"left",color:P.textMute,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>)}
         </tr></thead>
         <tbody>{yearData.map(d=><tr key={d.year} style={{borderBottom:`1px solid ${P.borderLight}`,background:d.events.length>0?P.amberBg:"transparent"}}>
-          <td style={{padding:"10px",fontWeight:700,color:P.text}}>Year {d.year}</td>
+          <td style={{padding:"10px",fontWeight:700,color:P.text}}>Y{d.year}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.income)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.housing)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.green,fontWeight:600}}>{money(d.offsets)}</td>
           <td style={{padding:"10px",textAlign:"right",fontWeight:700,color:d.delta<=0?P.green:P.red}}>{signedMoney(d.delta)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.ongoing)}</td>
-          <td style={{padding:"10px",textAlign:"right",color:d.extras>0?P.amber:P.textMute,fontWeight:500}}>{d.extras>0?money(d.extras):"—"}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.text,fontWeight:600}}>{money(d.totalOut)}</td>
           <td style={{padding:"10px",textAlign:"right",fontWeight:700,color:d.surplus>=0?P.green:P.red}}>{signedMoney(d.surplus)}</td>
-          <td style={{padding:"10px",fontSize:11,color:P.textSec,maxWidth:200}}>{d.events.length>0?d.events.map(e=>`${e.label||e.type}${e.amount?` (${e.type==="rate_change"?e.amount+"%":"$"+Math.abs(e.amount).toLocaleString()})`:""}`).join(", "):"—"}</td>
+          <td style={{padding:"10px",fontSize:11,color:P.textSec,maxWidth:200}}>{d.events.length>0?d.events.map(e=>`${e.label||"Custom"} (${money(e.amount)})`).join(", "):"—"}</td>
         </tr>)}</tbody>
       </table>
     </div>

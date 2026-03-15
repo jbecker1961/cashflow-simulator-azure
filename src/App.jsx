@@ -291,10 +291,11 @@ function SidebarContent({s,set,sideTab,setSideTab}){
 function TimelineView({baseCalc,baseState}){
   const[maxYear,setMaxYear]=useState(10);
   const[events,setEvents]=useState([]);
+  const[chartMode,setChartMode]=useState("surplus");
   const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,type:"expense_add",label:"",amount:0}]);
   const rmEvent=id=>setEvents(p=>p.filter(e=>e.id!==id));
   const upEvent=(id,k,v)=>setEvents(p=>p.map(e=>e.id===id?{...e,[k]:v}:e));
-  const eventTypes=[{value:"income_change",label:"Income Change",icon:"💵"},{value:"expense_add",label:"New Expense",icon:"📋"},{value:"expense_end",label:"Expense Ends",icon:"✅"},{value:"rate_change",label:"Rate Change",icon:"📉"},{value:"custom",label:"Custom",icon:"⚙️"}];
+  const eventTypes=[{value:"income_change",label:"Income Change",icon:"💵"},{value:"expense_add",label:"New Expense",icon:"📋"},{value:"expense_end",label:"Expense Ends",icon:"✅"},{value:"offset_change",label:"Offset Change",icon:"🔄"},{value:"rate_change",label:"Rate Change",icon:"📉"},{value:"custom",label:"Custom",icon:"⚙️"}];
 
   /* compute year-by-year cashflow */
   const yearData=useMemo(()=>{
@@ -302,6 +303,7 @@ function TimelineView({baseCalc,baseState}){
     let runIncome=baseCalc.monthlyIncome;
     let runHousing=baseCalc.newHousing;
     let runOngoing=baseCalc.totalOngoing;
+    let runOffsets=baseCalc.totalOff;
     let extraItems=[]; /* {label,amount,endYear?} */
     let runRate=baseState.rate||0;
     for(let yr=1;yr<=maxYear;yr++){
@@ -311,11 +313,11 @@ function TimelineView({baseCalc,baseState}){
         if(ev.type==="income_change") runIncome+=(ev.amount||0);
         else if(ev.type==="expense_add") extraItems.push({label:ev.label||"Expense",amount:ev.amount||0,endYear:ev.endYear||null});
         else if(ev.type==="expense_end"){
-          /* remove matching expense by label */
           const idx=extraItems.findIndex(x=>x.label===ev.label);
           if(idx>=0)extraItems.splice(idx,1);
           else runOngoing-=Math.abs(ev.amount||0);
         }
+        else if(ev.type==="offset_change") runOffsets+=(ev.amount||0);
         else if(ev.type==="rate_change"){
           runRate=ev.amount||runRate;
           const isBuy=(baseState.scenarioMode||"buy")==="buy";
@@ -336,7 +338,8 @@ function TimelineView({baseCalc,baseState}){
       const extraTotal=extraItems.reduce((s,x)=>s+x.amount,0);
       const totalOut=runHousing+Math.max(0,runOngoing)+extraTotal;
       const surplus=runIncome-totalOut;
-      data.push({year:yr,income:runIncome,housing:runHousing,ongoing:Math.max(0,runOngoing),extras:extraTotal,extraItems:[...extraItems],totalOut,surplus,events:yrEvents});
+      const delta=runHousing-runOffsets;
+      data.push({year:yr,income:runIncome,housing:runHousing,ongoing:Math.max(0,runOngoing),extras:extraTotal,extraItems:[...extraItems],totalOut,surplus,offsets:runOffsets,delta,events:yrEvents});
     }
     return data;
   },[maxYear,events,baseCalc,baseState]);
@@ -344,20 +347,20 @@ function TimelineView({baseCalc,baseState}){
   /* SVG Chart */
   const chartW=700,chartH=260,padL=70,padR=20,padT=30,padB=40;
   const plotW=chartW-padL-padR,plotH=chartH-padT-padB;
-  const vals=yearData.map(d=>d.surplus);
+  const chartVal=d=>chartMode==="surplus"?d.surplus:chartMode==="delta"?d.delta:d.offsets;
+  const chartLabel=chartMode==="surplus"?"Monthly Surplus":chartMode==="delta"?"Monthly Delta (Housing − Offsets)":"Monthly Offsets";
+  const chartColor=chartMode==="offsets"?P.green:P.accent;
+  const vals=yearData.map(chartVal);
   const minV=Math.min(...vals,0),maxV=Math.max(...vals,1);
   const range=maxV-minV||1;
   const xStep=plotW/Math.max(yearData.length-1,1);
   const toY=v=>padT+plotH-(((v-minV)/range)*plotH);
   const toX=(i)=>padL+i*xStep;
-  const linePts=yearData.map((d,i)=>`${toX(i)},${toY(d.surplus)}`).join(" ");
+  const linePts=yearData.map((d,i)=>`${toX(i)},${toY(chartVal(d))}`).join(" ");
   const zeroY=toY(0);
-  /* income line */
-  const incPts=yearData.map((d,i)=>`${toX(i)},${toY(d.income)}`).join(" ");
-  const outPts=yearData.map((d,i)=>`${toX(i)},${toY(-d.totalOut)}`).join(" ");
 
   return<div>
-    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Start with your current scenario as Year 1, then add life events (raises, kids, expenses ending) at future years. Everything carries forward until changed.</InfoBanner>
+    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Start with your current scenario as Year 1, then add life events at future years. Toggle between Surplus (full cashflow), Delta (housing − offsets), or Offsets view.</InfoBanner>
     <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:24,flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
         <label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Project out</label>
@@ -365,6 +368,7 @@ function TimelineView({baseCalc,baseState}){
           {[3,5,7,10,15,20,25,30].map(n=><option key={n} value={n}>{n} years</option>)}
         </select>
       </div>
+      <Toggle3 options={[{value:"surplus",label:"💰 Surplus"},{value:"delta",label:"📊 Delta"},{value:"offsets",label:"🔄 Offsets"}]} value={chartMode} onChange={setChartMode}/>
       <button onClick={addEvent} style={{border:"none",cursor:"pointer",fontFamily:"'Plus Jakarta Sans'",fontSize:12,fontWeight:600,borderRadius:10,padding:"8px 18px",background:P.accentLight,color:P.accent}}>+ Add Life Event</button>
     </div>
 
@@ -394,23 +398,22 @@ function TimelineView({baseCalc,baseState}){
 
     {/* Chart */}
     <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:24,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
-      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>Monthly Surplus Over Time</h3>
+      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>{chartLabel} Over Time</h3>
       <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width:"100%",maxWidth:chartW,height:"auto",fontFamily:"'Plus Jakarta Sans'"}}>
         {/* grid lines */}
         {[0,1,2,3,4].map(i=>{const v=minV+(range*(i/4));return<g key={i}><line x1={padL} x2={chartW-padR} y1={toY(v)} y2={toY(v)} stroke={P.borderLight} strokeWidth="1"/><text x={padL-8} y={toY(v)+4} textAnchor="end" fontSize="10" fill={P.textMute}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text></g>;})}
         {/* zero line */}
-        <line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.border} strokeWidth="1.5" strokeDasharray="4"/>
-        {/* surplus area */}
-        <polygon points={`${toX(0)},${zeroY} ${linePts} ${toX(yearData.length-1)},${zeroY}`} fill="url(#surpGrad)" opacity="0.3"/>
-        <defs><linearGradient id="surpGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={P.green}/><stop offset="100%" stopColor={P.red}/></linearGradient></defs>
-        {/* surplus line */}
-        <polyline points={linePts} fill="none" stroke={P.accent} strokeWidth="2.5" strokeLinejoin="round"/>
+        {minV<0&&<line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.border} strokeWidth="1.5" strokeDasharray="4"/>}
+        {/* area */}
+        <polygon points={`${toX(0)},${zeroY} ${linePts} ${toX(yearData.length-1)},${zeroY}`} fill={chartMode==="offsets"?P.green:chartColor} opacity="0.1"/>
+        {/* line */}
+        <polyline points={linePts} fill="none" stroke={chartColor} strokeWidth="2.5" strokeLinejoin="round"/>
         {/* dots + labels */}
-        {yearData.map((d,i)=><g key={i}>
-          <circle cx={toX(i)} cy={toY(d.surplus)} r="4" fill={d.surplus>=0?P.green:P.red} stroke={P.bgCard} strokeWidth="2"/>
+        {yearData.map((d,i)=>{const v=chartVal(d);const dotCol=chartMode==="offsets"?P.green:v>=0?P.green:P.red;return<g key={i}>
+          <circle cx={toX(i)} cy={toY(v)} r="4" fill={dotCol} stroke={P.bgCard} strokeWidth="2"/>
           <text x={toX(i)} y={chartH-8} textAnchor="middle" fontSize="10" fill={P.textMute}>Y{d.year}</text>
-          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.surplus)-12} textAnchor="middle" fontSize="10" fontWeight="600" fill={d.surplus>=0?P.green:P.red}>{d.surplus>=0?"":"-"}${Math.round(Math.abs(d.surplus)/1000)}k</text>}
-        </g>)}
+          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(v)-12} textAnchor="middle" fontSize="10" fontWeight="600" fill={dotCol}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text>}
+        </g>;})}
         {/* event markers */}
         {yearData.filter(d=>d.events.length>0).map((d,i)=><g key={`ev${i}`}>
           <line x1={toX(d.year-1)} x2={toX(d.year-1)} y1={padT} y2={chartH-padB} stroke={P.amber} strokeWidth="1" strokeDasharray="3" opacity="0.5"/>
@@ -428,12 +431,14 @@ function TimelineView({baseCalc,baseState}){
     <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:0,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,fontFamily:"'Plus Jakarta Sans'"}}>
         <thead><tr style={{borderBottom:`2px solid ${P.border}`}}>
-          {["Year","Income","Housing","Ongoing","Extras","Total Out","Surplus","Events"].map((h,i)=><th key={i} style={{padding:"12px 10px",textAlign:i>=1&&i<=6?"right":"left",color:P.textMute,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>)}
+          {["Year","Income","Housing","Offsets","Delta","Ongoing","Extras","Total Out","Surplus","Events"].map((h,i)=><th key={i} style={{padding:"12px 10px",textAlign:i>=1&&i<=8?"right":"left",color:P.textMute,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>)}
         </tr></thead>
         <tbody>{yearData.map(d=><tr key={d.year} style={{borderBottom:`1px solid ${P.borderLight}`,background:d.events.length>0?P.amberBg:"transparent"}}>
           <td style={{padding:"10px",fontWeight:700,color:P.text}}>Year {d.year}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.income)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.housing)}</td>
+          <td style={{padding:"10px",textAlign:"right",color:P.green,fontWeight:600}}>{money(d.offsets)}</td>
+          <td style={{padding:"10px",textAlign:"right",fontWeight:700,color:d.delta<=0?P.green:P.red}}>{signedMoney(d.delta)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.ongoing)}</td>
           <td style={{padding:"10px",textAlign:"right",color:d.extras>0?P.amber:P.textMute,fontWeight:500}}>{d.extras>0?money(d.extras):"—"}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.text,fontWeight:600}}>{money(d.totalOut)}</td>

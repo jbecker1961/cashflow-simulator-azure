@@ -56,7 +56,9 @@ function gD(){return{
   /* shared offsets */
   stateTaxSavings:0,ficaMode:"dollar",ficaDollar:0,ficaPct:6.2,ficaBaseSalary:0,carPayoffs:[],otherOffsets:[],
   /* income & expenses */
-  monthlyIncome:0,expenses:eE()
+  monthlyIncome:0,expenses:eE(),
+  /* timeline */
+  timelineEvents:[],timelineMaxYear:10
 };}
 
 /* ── Federal tax brackets 2024 ── */
@@ -288,48 +290,63 @@ function SidebarContent({s,set,sideTab,setSideTab}){
   </>;
 }
 /* ── Timeline Planner ── */
-function TimelineView({baseCalc,baseState}){
-  const[maxYear,setMaxYear]=useState(10);
-  const[events,setEvents]=useState([]);
+function TimelineView({baseCalc,baseState,setState}){
+  const events=baseState.timelineEvents||[];
+  const maxYear=baseState.timelineMaxYear||10;
+  const setMaxYear=v=>setState("timelineMaxYear",v);
+  const setEvents=fn=>{const next=typeof fn==="function"?fn(events):fn;setState("timelineEvents",next);};
+  const sorted=useMemo(()=>[...events].sort((a,b)=>a.year-b.year),[events]);
 
-  /* Build list of actual scenario items for dropdowns */
+  const actionCats=[
+    {value:"add_expense",label:"+ Add Expense",icon:"📋",group:"expense"},
+    {value:"remove_expense",label:"− Remove Expense",icon:"✅",group:"expense"},
+    {value:"modify_expense",label:"✏️ Modify Expense",icon:"✏️",group:"expense"},
+    {value:"add_offset",label:"+ Add Offset",icon:"🔄",group:"offset"},
+    {value:"remove_offset",label:"− Remove Offset",icon:"❌",group:"offset"},
+    {value:"modify_offset",label:"✏️ Modify Offset",icon:"✏️",group:"offset"},
+    {value:"income_raise",label:"↑ Income Raise",icon:"💵",group:"income"},
+    {value:"income_cut",label:"↓ Income Cut",icon:"💵",group:"income"},
+  ];
+
+  /* Build scenario items grouped */
   const scenarioItems=useMemo(()=>{
     const items=[];
-    /* Expenses */
     const cats=baseState.expenses||{};
     Object.keys(cats).forEach(catKey=>{
       const cat=CATS.find(c=>c.key===catKey);
       (cats[catKey]||[]).forEach(item=>{
-        if(item.amount>0)items.push({group:"Expense",label:`${cat?.icon||""} ${item.name}`,amount:item.amount,action:"remove_expense"});
+        if(item.amount>0)items.push({group:"expense",label:`${cat?.icon||""} ${item.name}`,amount:item.amount});
       });
     });
-    /* Offsets */
-    if(baseCalc.houseOff>0)items.push({group:"Offset",label:"House Offset",amount:baseCalc.houseOff,action:"change_offset"});
-    if(baseCalc.stateTaxSavings>0)items.push({group:"Offset",label:"State Tax Savings",amount:baseCalc.stateTaxSavings,action:"change_offset"});
-    if(baseCalc.ficaOff>0)items.push({group:"Offset",label:"FICA Savings",amount:baseCalc.ficaOff,action:"change_offset"});
-    (baseState.carPayoffs||[]).forEach(c=>{if(c.amount>0)items.push({group:"Offset",label:`Car: ${c.name}`,amount:c.amount,action:"remove_offset"});});
-    (baseState.otherOffsets||[]).forEach(o=>{if(o.amount>0)items.push({group:"Offset",label:`Offset: ${o.name}`,amount:o.amount,action:"remove_offset"});});
-    /* Income */
-    items.push({group:"Income",label:"Monthly Income",amount:baseCalc.monthlyIncome,action:"change_income"});
+    if(baseCalc.houseOff>0)items.push({group:"offset",label:"House Offset",amount:baseCalc.houseOff});
+    if(baseCalc.stateTaxSavings>0)items.push({group:"offset",label:"State Tax Savings",amount:baseCalc.stateTaxSavings});
+    if(baseCalc.ficaOff>0)items.push({group:"offset",label:"FICA Savings",amount:baseCalc.ficaOff});
+    (baseState.carPayoffs||[]).forEach(c=>{if(c.amount>0)items.push({group:"offset",label:`Car: ${c.name}`,amount:c.amount});});
+    (baseState.otherOffsets||[]).forEach(o=>{if(o.amount>0)items.push({group:"offset",label:`Offset: ${o.name}`,amount:o.amount});});
     return items;
   },[baseCalc,baseState]);
 
-  const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,source:"custom",action:"add_expense",label:"",amount:0}]);
+  const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,action:"add_expense",source:"custom",label:"",amount:0}]);
   const rmEvent=id=>setEvents(p=>p.filter(e=>e.id!==id));
   const upEvent=(id,k,v)=>setEvents(p=>p.map(e=>e.id===id?{...e,[k]:v}:e));
 
-  const pickSource=(evId,sourceIdx)=>{
+  const setAction=(evId,action)=>{
+    setEvents(p=>p.map(e=>e.id===evId?{...e,action,source:"custom",label:"",amount:0}:e));
+  };
+  const pickItem=(evId,sourceIdx)=>{
     if(sourceIdx==="custom"){
-      upEvent(evId,"source","custom");
-      upEvent(evId,"action","add_expense");
-      upEvent(evId,"label","");
-      upEvent(evId,"amount",0);
+      upEvent(evId,"source","custom");upEvent(evId,"label","");upEvent(evId,"amount",0);
     } else {
       const item=scenarioItems[Number(sourceIdx)];
-      if(item){
-        setEvents(p=>p.map(e=>e.id===evId?{...e,source:sourceIdx,action:item.action,label:item.label,amount:item.amount}:e));
-      }
+      if(item)setEvents(p=>p.map(e=>e.id===evId?{...e,source:sourceIdx,label:item.label,amount:item.amount}:e));
     }
+  };
+
+  /* Filter items based on action */
+  const itemsForAction=(action)=>{
+    const ac=actionCats.find(a=>a.value===action);
+    if(!ac)return[];
+    return scenarioItems.filter(i=>i.group===ac.group);
   };
 
   /* compute year-by-year */
@@ -339,53 +356,36 @@ function TimelineView({baseCalc,baseState}){
     let runHousing=baseCalc.newHousing;
     let runOffsets=baseCalc.totalOff;
     let runOngoing=baseCalc.totalOngoing;
-    let extraExpenses=[]; /* {label,amount,endYear?} */
-    let extraOffsets=[]; /* {label,amount,endYear?} */
+    let tempExpenses=[];
+    let tempOffsets=[];
     for(let yr=1;yr<=maxYear;yr++){
-      const yrEvents=events.filter(e=>e.year===yr);
+      const yrEvents=sorted.filter(e=>e.year===yr);
       for(const ev of yrEvents){
-        const a=ev.action||"add_expense";
-        const amt=Math.abs(ev.amount||0);
-        if(a==="remove_expense"){
-          /* find and remove from ongoing or extras */
-          const eidx=extraExpenses.findIndex(x=>x.label===ev.label);
-          if(eidx>=0)extraExpenses.splice(eidx,1);
-          else runOngoing-=amt;
-        } else if(a==="add_expense"){
-          extraExpenses.push({label:ev.label||"Expense",amount:amt,endYear:ev.endYear||null});
-        } else if(a==="remove_offset"){
-          const oidx=extraOffsets.findIndex(x=>x.label===ev.label);
-          if(oidx>=0)extraOffsets.splice(oidx,1);
-          else runOffsets-=amt;
-        } else if(a==="add_offset"){
-          extraOffsets.push({label:ev.label||"Offset",amount:amt,endYear:ev.endYear||null});
-        } else if(a==="change_offset"){
-          /* replace: remove old amount, add new */
-          runOffsets=runOffsets-amt+(ev.newAmount||0);
-        } else if(a==="change_income"){
-          runIncome+=(ev.amount||0); /* positive = raise, negative = cut */
-        } else if(a==="income_raise"){
-          runIncome+=amt;
-        } else if(a==="income_cut"){
-          runIncome-=amt;
-        }
+        const a=ev.action;const amt=Math.abs(ev.amount||0);
+        if(a==="add_expense")tempExpenses.push({label:ev.label||"Expense",amount:amt,endYear:ev.endYear||null});
+        else if(a==="remove_expense"){const idx=tempExpenses.findIndex(x=>x.label===ev.label);if(idx>=0)tempExpenses.splice(idx,1);else runOngoing-=amt;}
+        else if(a==="modify_expense"){/* find in ongoing or temp and change */const idx=tempExpenses.findIndex(x=>x.label===ev.label);if(idx>=0){const old=tempExpenses[idx].amount;tempExpenses[idx].amount=amt;}else{runOngoing=runOngoing-(ev.oldAmount||amt)+amt;}}
+        else if(a==="add_offset")tempOffsets.push({label:ev.label||"Offset",amount:amt,endYear:ev.endYear||null});
+        else if(a==="remove_offset"){const idx=tempOffsets.findIndex(x=>x.label===ev.label);if(idx>=0)tempOffsets.splice(idx,1);else runOffsets-=amt;}
+        else if(a==="modify_offset"){const idx=tempOffsets.findIndex(x=>x.label===ev.label);if(idx>=0)tempOffsets[idx].amount=amt;else runOffsets=runOffsets-(ev.oldAmount||amt)+amt;}
+        else if(a==="income_raise")runIncome+=amt;
+        else if(a==="income_cut")runIncome-=amt;
       }
-      extraExpenses=extraExpenses.filter(x=>!x.endYear||yr<=x.endYear);
-      extraOffsets=extraOffsets.filter(x=>!x.endYear||yr<=x.endYear);
-      const xExpTotal=extraExpenses.reduce((s,x)=>s+x.amount,0);
-      const xOffTotal=extraOffsets.reduce((s,x)=>s+x.amount,0);
-      const totalOffsets=Math.max(0,runOffsets)+xOffTotal;
-      const housing=runHousing;
-      const ongoing=Math.max(0,runOngoing)+xExpTotal;
-      const delta=housing-totalOffsets;
-      const totalOut=housing+ongoing;
+      tempExpenses=tempExpenses.filter(x=>!x.endYear||yr<=x.endYear);
+      tempOffsets=tempOffsets.filter(x=>!x.endYear||yr<=x.endYear);
+      const xE=tempExpenses.reduce((s,x)=>s+x.amount,0);
+      const xO=tempOffsets.reduce((s,x)=>s+x.amount,0);
+      const totalOff=Math.max(0,runOffsets)+xO;
+      const ongoing=Math.max(0,runOngoing)+xE;
+      const delta=runHousing-totalOff;
+      const totalOut=runHousing+ongoing;
       const surplus=runIncome-totalOut;
-      data.push({year:yr,income:runIncome,housing,offsets:totalOffsets,delta,ongoing,totalOut,surplus,events:yrEvents});
+      data.push({year:yr,income:runIncome,housing:runHousing,offsets:totalOff,delta,ongoing,totalOut,surplus,events:yrEvents});
     }
     return data;
-  },[maxYear,events,baseCalc,baseState]);
+  },[maxYear,sorted,baseCalc,baseState]);
 
-  /* Dual-line SVG Chart */
+  /* Chart */
   const chartW=700,chartH=280,padL=70,padR=20,padT=30,padB=40;
   const plotW=chartW-padL-padR,plotH=chartH-padT-padB;
   const allVals=[...yearData.map(d=>d.delta),...yearData.map(d=>d.surplus)];
@@ -398,75 +398,82 @@ function TimelineView({baseCalc,baseState}){
   const surplusLine=yearData.map((d,i)=>`${toX(i)},${toY(d.surplus)}`).join(" ");
   const zeroY=toY(0);
 
-  const actionOpts=[{value:"add_expense",label:"+ Add Expense"},{value:"remove_expense",label:"− Remove Expense"},{value:"add_offset",label:"+ Add Offset"},{value:"remove_offset",label:"− Remove Offset"},{value:"income_raise",label:"↑ Income Raise"},{value:"income_cut",label:"↓ Income Cut"}];
-
   return<div>
-    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Your current delta is <strong>{signedMoney(baseCalc.delta)}/mo</strong> and surplus is <strong>{signedMoney(baseCalc.newCashflow)}/mo</strong>. Add life events to see how both change year over year. Select from your actual scenario items or add custom ones.</InfoBanner>
+    <InfoBanner color="blue">📅 <strong>Timeline</strong> — Current delta: <strong>{signedMoney(baseCalc.delta)}/mo</strong>, surplus: <strong>{signedMoney(baseCalc.newCashflow)}/mo</strong>. Add events to project changes. Pick a category first, then select from your scenario items or go custom.</InfoBanner>
     <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:24,flexWrap:"wrap"}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Project out</label>
+        <label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Years</label>
         <select value={maxYear} onChange={e=>setMaxYear(Number(e.target.value))} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"8px 12px",outline:"none",fontWeight:600}}>
-          {[3,5,7,10,15,20,25,30].map(n=><option key={n} value={n}>{n} years</option>)}
+          {[3,5,7,10,15,20,25,30].map(n=><option key={n} value={n}>{n}</option>)}
         </select>
       </div>
       <button onClick={addEvent} style={{border:"none",cursor:"pointer",fontFamily:"'Plus Jakarta Sans'",fontSize:12,fontWeight:600,borderRadius:10,padding:"8px 18px",background:P.accentLight,color:P.accent}}>+ Add Life Event</button>
+      <span style={{fontSize:11,color:P.textMute}}>{sorted.length} event{sorted.length!==1?"s":""}</span>
     </div>
 
-    {events.length>0&&<div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:20,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+    {sorted.length>0&&<div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:20,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
       <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 14px"}}>Life Events</h3>
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {events.map(ev=><div key={ev.id} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",padding:"10px 12px",background:P.bgInput,borderRadius:12}}>
-          <select value={ev.year} onChange={e=>upEvent(ev.id,"year",Number(e.target.value))} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:600,width:65}}>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {sorted.map(ev=>{
+          const ac=actionCats.find(a=>a.value===ev.action);
+          const relevantItems=itemsForAction(ev.action);
+          const isRemoveOrModify=ev.action?.startsWith("remove")||ev.action?.startsWith("modify");
+          const isAdd=ev.action?.startsWith("add");
+          const acColor=ac?.group==="expense"?P.amber:ac?.group==="offset"?P.green:P.accent;
+          return<div key={ev.id} style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",padding:"10px 12px",background:P.bgInput,borderRadius:12,borderLeft:`3px solid ${acColor}`}}>
+          {/* Year */}
+          <select value={ev.year} onChange={e=>upEvent(ev.id,"year",Number(e.target.value))} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:600,width:62}}>
             {Array.from({length:maxYear},(_,i)=>i+1).map(y=><option key={y} value={y}>Yr {y}</option>)}
           </select>
-          <select value={ev.source||"custom"} onChange={e=>pickSource(ev.id,e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:500,maxWidth:160}}>
-            <option value="custom">✏️ Custom</option>
-            {scenarioItems.map((item,idx)=><option key={idx} value={idx}>{item.group}: {item.label} ({money(item.amount)}/mo)</option>)}
+          {/* Action (category first) */}
+          <select value={ev.action} onChange={e=>setAction(ev.id,e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:600,width:145}}>
+            {actionCats.map(a=><option key={a.value} value={a.value}>{a.icon} {a.label}</option>)}
           </select>
-          {ev.source==="custom"&&<select value={ev.action||"add_expense"} onChange={e=>upEvent(ev.id,"action",e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:500,width:130}}>
-            {actionOpts.map(a=><option key={a.value} value={a.value}>{a.label}</option>)}
+          {/* Item picker — only show relevant items for this action */}
+          {(isRemoveOrModify||isAdd)&&relevantItems.length>0&&<select value={ev.source||"custom"} onChange={e=>pickItem(ev.id,e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"6px 6px",outline:"none",fontWeight:500,maxWidth:180}}>
+            <option value="custom">✏️ Custom</option>
+            {relevantItems.map((item,idx)=>{const gIdx=scenarioItems.indexOf(item);return<option key={gIdx} value={gIdx}>{item.label} ({money(item.amount)}/mo)</option>;})}
           </select>}
-          {ev.source==="custom"&&<input value={ev.label||""} onChange={e=>upEvent(ev.id,"label",e.target.value)} placeholder="Description" style={{flex:1,minWidth:80,background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 10px",outline:"none",fontWeight:500}}/>}
+          {/* Custom label */}
+          {(ev.source==="custom"||!relevantItems.length)&&<input value={ev.label||""} onChange={e=>upEvent(ev.id,"label",e.target.value)} placeholder="Description" style={{flex:1,minWidth:80,background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 10px",outline:"none",fontWeight:500}}/>}
+          {/* Amount */}
           <div style={{display:"flex",alignItems:"center",background:P.bgCard,borderRadius:8,border:`1.5px solid ${P.border}`,overflow:"hidden",width:100,height:32}}>
             <span style={{padding:"0 0 0 6px",color:P.textMute,fontSize:11,fontWeight:600}}>$</span>
             <NumInput value={ev.amount||0} onChange={v=>upEvent(ev.id,"amount",v)} style={{fontSize:12,padding:"0 6px"}}/>
           </div>
-          {(ev.action==="add_expense"||ev.action==="add_offset")&&<div style={{display:"flex",alignItems:"center",gap:3}}><span style={{fontSize:10,color:P.textMute}}>ends</span><select value={ev.endYear||""} onChange={e=>upEvent(ev.id,"endYear",e.target.value?Number(e.target.value):null)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:10,fontFamily:"'Plus Jakarta Sans'",padding:"3px 4px",outline:"none",width:55}}>
+          {/* End year for add */}
+          {isAdd&&<div style={{display:"flex",alignItems:"center",gap:3}}><span style={{fontSize:10,color:P.textMute}}>ends</span><select value={ev.endYear||""} onChange={e=>upEvent(ev.id,"endYear",e.target.value?Number(e.target.value):null)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:10,fontFamily:"'Plus Jakarta Sans'",padding:"3px 4px",outline:"none",width:55}}>
             <option value="">never</option>{Array.from({length:maxYear},(_,i)=>i+1).filter(y=>y>=ev.year).map(y=><option key={y} value={y}>Yr {y}</option>)}
           </select></div>}
+          {/* Delete */}
           <button onClick={()=>rmEvent(ev.id)} style={{background:"none",border:"none",color:P.textMute,cursor:"pointer",fontSize:18,padding:2,borderRadius:4}} onMouseEnter={e=>e.target.style.color=P.red} onMouseLeave={e=>e.target.style.color=P.textMute}>×</button>
-        </div>)}
+        </div>;})}
       </div>
     </div>}
 
-    {/* Dual Chart */}
+    {/* Chart */}
     <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:24,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
       <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>Delta & Surplus Over Time</h3>
       <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width:"100%",maxWidth:chartW,height:"auto",fontFamily:"'Plus Jakarta Sans'"}}>
         {[0,1,2,3,4].map(i=>{const v=minV+(range*(i/4));return<g key={i}><line x1={padL} x2={chartW-padR} y1={toY(v)} y2={toY(v)} stroke={P.borderLight} strokeWidth="1"/><text x={padL-8} y={toY(v)+4} textAnchor="end" fontSize="10" fill={P.textMute}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text></g>;})}
         {minV<0&&maxV>0&&<line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.text} strokeWidth="1" strokeDasharray="4" opacity="0.3"/>}
-        {/* Delta line - blue */}
         <polyline points={deltaLine} fill="none" stroke={P.accent} strokeWidth="2.5" strokeLinejoin="round"/>
-        {/* Surplus line - purple */}
         <polyline points={surplusLine} fill="none" stroke={P.purple} strokeWidth="2.5" strokeLinejoin="round" strokeDasharray="6 3"/>
-        {/* Delta dots */}
-        {yearData.map((d,i)=><g key={`d${i}`}>
-          <circle cx={toX(i)} cy={toY(d.delta)} r="4" fill={d.delta<=0?P.green:P.red} stroke={P.bgCard} strokeWidth="2"/>
+        {yearData.map((d,i)=>{const dCol=d.delta<=0?P.green:P.red;return<g key={`d${i}`}>
+          <circle cx={toX(i)} cy={toY(d.delta)} r="4" fill={dCol} stroke={P.bgCard} strokeWidth="2"/>
           <text x={toX(i)} y={chartH-8} textAnchor="middle" fontSize="10" fill={P.textMute}>Y{d.year}</text>
-          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.delta)-12} textAnchor="middle" fontSize="9" fontWeight="700" fill={d.delta<=0?P.green:P.red}>{signedMoney(d.delta)}</text>}
-        </g>)}
-        {/* Surplus dots */}
+          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.delta)-12} textAnchor="middle" fontSize="9" fontWeight="700" fill={dCol}>{signedMoney(d.delta)}</text>}
+        </g>;})}
         {yearData.map((d,i)=><g key={`s${i}`}>
           <circle cx={toX(i)} cy={toY(d.surplus)} r="3" fill={P.purple} stroke={P.bgCard} strokeWidth="1.5"/>
           {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.surplus)+16} textAnchor="middle" fontSize="9" fontWeight="600" fill={P.purple}>{signedMoney(d.surplus)}</text>}
         </g>)}
-        {/* event markers */}
         {yearData.filter(d=>d.events.length>0).map(d=><line key={`e${d.year}`} x1={toX(d.year-1)} x2={toX(d.year-1)} y1={padT} y2={chartH-padB} stroke={P.amber} strokeWidth="1" strokeDasharray="3" opacity="0.5"/>)}
       </svg>
       <div style={{display:"flex",gap:20,marginTop:10,fontSize:11,color:P.textMute}}>
-        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:3,background:P.accent,borderRadius:2,display:"inline-block"}}/>Delta (housing − offsets)</span>
-        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:0,borderTop:`2.5px dashed ${P.purple}`,display:"inline-block"}}/>Surplus (income − all out)</span>
-        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:0,borderTop:`2px dashed ${P.amber}`,display:"inline-block"}}/>Life event</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:3,background:P.accent,borderRadius:2,display:"inline-block"}}/>Delta</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:16,height:0,borderTop:`2.5px dashed ${P.purple}`,display:"inline-block"}}/>Surplus</span>
+        <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{width:12,height:0,borderTop:`2px dashed ${P.amber}`,display:"inline-block"}}/>Event</span>
       </div>
     </div>
 
@@ -485,7 +492,7 @@ function TimelineView({baseCalc,baseState}){
           <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.ongoing)}</td>
           <td style={{padding:"10px",textAlign:"right",color:P.text,fontWeight:600}}>{money(d.totalOut)}</td>
           <td style={{padding:"10px",textAlign:"right",fontWeight:700,color:d.surplus>=0?P.green:P.red}}>{signedMoney(d.surplus)}</td>
-          <td style={{padding:"10px",fontSize:11,color:P.textSec,maxWidth:200}}>{d.events.length>0?d.events.map(e=>`${e.label||"Custom"} (${money(e.amount)})`).join(", "):"—"}</td>
+          <td style={{padding:"10px",fontSize:11,color:P.textSec,maxWidth:200}}>{d.events.length>0?d.events.map(e=>{const ac=actionCats.find(a=>a.value===e.action);return`${ac?.icon||""} ${e.label||e.action} (${money(e.amount)})`;}).join(", "):"—"}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -595,7 +602,7 @@ export default function App(){
 
         {view==="sc"&&<CompareView scenarios={scenarios}/>}
         {view==="eq"&&<EquivView scenarios={scenarios}/>}
-        {view==="tl"&&<TimelineView baseCalc={calc} baseState={state}/>}
+        {view==="tl"&&<TimelineView baseCalc={calc} baseState={state} setState={set}/>}
 
         {calc.loan>0&&isBuy&&["delta","cashflow","cv"].includes(view)&&<div style={{marginTop:20,padding:"14px 20px",background:P.bgCard,borderRadius:14,border:`1px solid ${P.border}`,display:"flex",flexWrap:"wrap",gap:"6px 28px",fontSize:12,color:P.textSec,fontWeight:500,boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><span>Loan: <strong style={{color:P.text}}>{money(calc.loan)}</strong></span><span>Down: <strong style={{color:P.text}}>{money(state.downPayment)}</strong> ({state.homePrice>0?((state.downPayment/state.homePrice)*100).toFixed(1):0}%)</span><span>Rate: <strong style={{color:P.text}}>{pF(state.rate)}</strong></span><span>Type: <strong style={{color:P.text}}>{state.mortgageType==="30fixed"?"30yr Fixed":"7/1 IO"}</strong></span></div>}
       </div>

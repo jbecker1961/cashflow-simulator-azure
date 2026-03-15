@@ -287,6 +287,163 @@ function SidebarContent({s,set,sideTab,setSideTab}){
     {sideTab==="expenses"&&<><div style={{padding:"10px 0 6px",fontSize:13,color:P.textSec,lineHeight:1.5}}>Ongoing expenses that <strong style={{color:P.amber}}>persist regardless</strong>.</div>{CATS.map(cat=><Sec key={cat.key} title={`${cat.icon} ${cat.label}`} open={false} badge={sm((s.expenses||{})[cat.key]||[])}><DynList items={(s.expenses||{})[cat.key]||[]} setItems={items=>set("expenses",{...(s.expenses||eE()),[cat.key]:items})} defaultName={cat.label} addLabel={`Add ${cat.label.toLowerCase()}`}/></Sec>)}</>}
   </>;
 }
+/* ── Timeline Planner ── */
+function TimelineView({baseCalc,baseState}){
+  const[maxYear,setMaxYear]=useState(10);
+  const[events,setEvents]=useState([]);
+  const addEvent=()=>setEvents(p=>[...p,{id:uid(),year:2,type:"expense_add",label:"",amount:0}]);
+  const rmEvent=id=>setEvents(p=>p.filter(e=>e.id!==id));
+  const upEvent=(id,k,v)=>setEvents(p=>p.map(e=>e.id===id?{...e,[k]:v}:e));
+  const eventTypes=[{value:"income_change",label:"Income Change",icon:"💵"},{value:"expense_add",label:"New Expense",icon:"📋"},{value:"expense_end",label:"Expense Ends",icon:"✅"},{value:"rate_change",label:"Rate Change",icon:"📉"},{value:"custom",label:"Custom",icon:"⚙️"}];
+
+  /* compute year-by-year cashflow */
+  const yearData=useMemo(()=>{
+    const data=[];
+    let runIncome=baseCalc.monthlyIncome;
+    let runHousing=baseCalc.newHousing;
+    let runOngoing=baseCalc.totalOngoing;
+    let extraItems=[]; /* {label,amount,endYear?} */
+    let runRate=baseState.rate||0;
+    for(let yr=1;yr<=maxYear;yr++){
+      /* apply events for this year */
+      const yrEvents=events.filter(e=>e.year===yr);
+      for(const ev of yrEvents){
+        if(ev.type==="income_change") runIncome+=(ev.amount||0);
+        else if(ev.type==="expense_add") extraItems.push({label:ev.label||"Expense",amount:ev.amount||0,endYear:ev.endYear||null});
+        else if(ev.type==="expense_end"){
+          /* remove matching expense by label */
+          const idx=extraItems.findIndex(x=>x.label===ev.label);
+          if(idx>=0)extraItems.splice(idx,1);
+          else runOngoing-=Math.abs(ev.amount||0);
+        }
+        else if(ev.type==="rate_change"){
+          runRate=ev.amount||runRate;
+          const isBuy=(baseState.scenarioMode||"buy")==="buy";
+          if(isBuy){
+            const loan=Math.max(0,(baseState.homePrice||0)-(baseState.downPayment||0));
+            const newPI=baseState.mortgageType==="30fixed"?fPI(loan,runRate,30):ioP(loan,runRate);
+            const oldPI=baseCalc.pi||0;
+            runHousing=runHousing-oldPI+newPI;
+          }
+        }
+        else if(ev.type==="custom"){
+          if((ev.amount||0)>0)extraItems.push({label:ev.label||"Custom",amount:ev.amount||0,endYear:ev.endYear||null});
+          else runIncome+=(ev.amount||0);
+        }
+      }
+      /* remove expired extras */
+      extraItems=extraItems.filter(x=>!x.endYear||yr<=x.endYear);
+      const extraTotal=extraItems.reduce((s,x)=>s+x.amount,0);
+      const totalOut=runHousing+Math.max(0,runOngoing)+extraTotal;
+      const surplus=runIncome-totalOut;
+      data.push({year:yr,income:runIncome,housing:runHousing,ongoing:Math.max(0,runOngoing),extras:extraTotal,extraItems:[...extraItems],totalOut,surplus,events:yrEvents});
+    }
+    return data;
+  },[maxYear,events,baseCalc,baseState]);
+
+  /* SVG Chart */
+  const chartW=700,chartH=260,padL=70,padR=20,padT=30,padB=40;
+  const plotW=chartW-padL-padR,plotH=chartH-padT-padB;
+  const vals=yearData.map(d=>d.surplus);
+  const minV=Math.min(...vals,0),maxV=Math.max(...vals,1);
+  const range=maxV-minV||1;
+  const xStep=plotW/Math.max(yearData.length-1,1);
+  const toY=v=>padT+plotH-(((v-minV)/range)*plotH);
+  const toX=(i)=>padL+i*xStep;
+  const linePts=yearData.map((d,i)=>`${toX(i)},${toY(d.surplus)}`).join(" ");
+  const zeroY=toY(0);
+  /* income line */
+  const incPts=yearData.map((d,i)=>`${toX(i)},${toY(d.income)}`).join(" ");
+  const outPts=yearData.map((d,i)=>`${toX(i)},${toY(-d.totalOut)}`).join(" ");
+
+  return<div>
+    <InfoBanner color="blue">📅 <strong>Timeline Planner</strong> — Start with your current scenario as Year 1, then add life events (raises, kids, expenses ending) at future years. Everything carries forward until changed.</InfoBanner>
+    <div style={{display:"flex",gap:16,alignItems:"center",marginBottom:24,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <label style={{fontSize:12,fontWeight:600,color:P.textSec}}>Project out</label>
+        <select value={maxYear} onChange={e=>setMaxYear(Number(e.target.value))} style={{background:P.bgInput,border:`1.5px solid ${P.border}`,borderRadius:10,color:P.text,fontSize:13,fontFamily:"'Plus Jakarta Sans'",padding:"8px 12px",outline:"none",fontWeight:600}}>
+          {[3,5,7,10,15,20,25,30].map(n=><option key={n} value={n}>{n} years</option>)}
+        </select>
+      </div>
+      <button onClick={addEvent} style={{border:"none",cursor:"pointer",fontFamily:"'Plus Jakarta Sans'",fontSize:12,fontWeight:600,borderRadius:10,padding:"8px 18px",background:P.accentLight,color:P.accent}}>+ Add Life Event</button>
+    </div>
+
+    {/* Events editor */}
+    {events.length>0&&<div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:20,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 14px"}}>Life Events</h3>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {events.map(ev=><div key={ev.id} style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",padding:"10px 12px",background:P.bgInput,borderRadius:12}}>
+          <select value={ev.year} onChange={e=>upEvent(ev.id,"year",Number(e.target.value))} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:600,width:70}}>
+            {Array.from({length:maxYear},(_,i)=>i+1).map(y=><option key={y} value={y}>Yr {y}</option>)}
+          </select>
+          <select value={ev.type} onChange={e=>upEvent(ev.id,"type",e.target.value)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 8px",outline:"none",fontWeight:500,width:140}}>
+            {eventTypes.map(t=><option key={t.value} value={t.value}>{t.icon} {t.label}</option>)}
+          </select>
+          <input value={ev.label||""} onChange={e=>upEvent(ev.id,"label",e.target.value)} placeholder={ev.type==="expense_end"?"Which expense?":"Description"} style={{flex:1,minWidth:100,background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:12,fontFamily:"'Plus Jakarta Sans'",padding:"6px 10px",outline:"none",fontWeight:500}}/>
+          <div style={{display:"flex",alignItems:"center",background:P.bgCard,borderRadius:8,border:`1.5px solid ${P.border}`,overflow:"hidden",width:110,height:34}}>
+            <span style={{padding:"0 0 0 8px",color:P.textMute,fontSize:12,fontWeight:600}}>{ev.type==="rate_change"?"%":"$"}</span>
+            <NumInput value={ev.amount||0} onChange={v=>upEvent(ev.id,"amount",v)} style={{fontSize:12,padding:"0 6px"}}/>
+          </div>
+          {(ev.type==="expense_add"||ev.type==="custom")&&<div style={{display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:11,color:P.textMute}}>ends yr</span><select value={ev.endYear||""} onChange={e=>upEvent(ev.id,"endYear",e.target.value?Number(e.target.value):null)} style={{background:P.bgCard,border:`1.5px solid ${P.border}`,borderRadius:8,color:P.text,fontSize:11,fontFamily:"'Plus Jakarta Sans'",padding:"4px 6px",outline:"none",width:60}}>
+            <option value="">never</option>{Array.from({length:maxYear},(_,i)=>i+1).filter(y=>y>=ev.year).map(y=><option key={y} value={y}>Yr {y}</option>)}
+          </select></div>}
+          <button onClick={()=>rmEvent(ev.id)} style={{background:"none",border:"none",color:P.textMute,cursor:"pointer",fontSize:18,padding:2,borderRadius:4}} onMouseEnter={e=>e.target.style.color=P.red} onMouseLeave={e=>e.target.style.color=P.textMute}>×</button>
+        </div>)}
+      </div>
+    </div>}
+
+    {/* Chart */}
+    <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:24,marginBottom:24,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
+      <h3 style={{fontSize:14,fontWeight:700,margin:"0 0 16px"}}>Monthly Surplus Over Time</h3>
+      <svg viewBox={`0 0 ${chartW} ${chartH}`} style={{width:"100%",maxWidth:chartW,height:"auto",fontFamily:"'Plus Jakarta Sans'"}}>
+        {/* grid lines */}
+        {[0,1,2,3,4].map(i=>{const v=minV+(range*(i/4));return<g key={i}><line x1={padL} x2={chartW-padR} y1={toY(v)} y2={toY(v)} stroke={P.borderLight} strokeWidth="1"/><text x={padL-8} y={toY(v)+4} textAnchor="end" fontSize="10" fill={P.textMute}>{v>=0?"":"-"}${Math.round(Math.abs(v)/1000)}k</text></g>;})}
+        {/* zero line */}
+        <line x1={padL} x2={chartW-padR} y1={zeroY} y2={zeroY} stroke={P.border} strokeWidth="1.5" strokeDasharray="4"/>
+        {/* surplus area */}
+        <polygon points={`${toX(0)},${zeroY} ${linePts} ${toX(yearData.length-1)},${zeroY}`} fill="url(#surpGrad)" opacity="0.3"/>
+        <defs><linearGradient id="surpGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={P.green}/><stop offset="100%" stopColor={P.red}/></linearGradient></defs>
+        {/* surplus line */}
+        <polyline points={linePts} fill="none" stroke={P.accent} strokeWidth="2.5" strokeLinejoin="round"/>
+        {/* dots + labels */}
+        {yearData.map((d,i)=><g key={i}>
+          <circle cx={toX(i)} cy={toY(d.surplus)} r="4" fill={d.surplus>=0?P.green:P.red} stroke={P.bgCard} strokeWidth="2"/>
+          <text x={toX(i)} y={chartH-8} textAnchor="middle" fontSize="10" fill={P.textMute}>Y{d.year}</text>
+          {(i===0||i===yearData.length-1||d.events.length>0)&&<text x={toX(i)} y={toY(d.surplus)-12} textAnchor="middle" fontSize="10" fontWeight="600" fill={d.surplus>=0?P.green:P.red}>{d.surplus>=0?"":"-"}${Math.round(Math.abs(d.surplus)/1000)}k</text>}
+        </g>)}
+        {/* event markers */}
+        {yearData.filter(d=>d.events.length>0).map((d,i)=><g key={`ev${i}`}>
+          <line x1={toX(d.year-1)} x2={toX(d.year-1)} y1={padT} y2={chartH-padB} stroke={P.amber} strokeWidth="1" strokeDasharray="3" opacity="0.5"/>
+        </g>)}
+      </svg>
+      <div style={{display:"flex",gap:16,marginTop:8,fontSize:11,color:P.textMute}}>
+        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:12,height:3,background:P.accent,borderRadius:2,display:"inline-block"}}/>Surplus</span>
+        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",background:P.green,display:"inline-block"}}/>Positive</span>
+        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:8,height:8,borderRadius:"50%",background:P.red,display:"inline-block"}}/>Negative</span>
+        <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:12,height:0,borderTop:`2px dashed ${P.amber}`,display:"inline-block"}}/>Event</span>
+      </div>
+    </div>
+
+    {/* Year-by-year table */}
+    <div style={{background:P.bgCard,borderRadius:16,border:`1px solid ${P.border}`,padding:0,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,fontFamily:"'Plus Jakarta Sans'"}}>
+        <thead><tr style={{borderBottom:`2px solid ${P.border}`}}>
+          {["Year","Income","Housing","Ongoing","Extras","Total Out","Surplus","Events"].map((h,i)=><th key={i} style={{padding:"12px 10px",textAlign:i>=1&&i<=6?"right":"left",color:P.textMute,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em"}}>{h}</th>)}
+        </tr></thead>
+        <tbody>{yearData.map(d=><tr key={d.year} style={{borderBottom:`1px solid ${P.borderLight}`,background:d.events.length>0?P.amberBg:"transparent"}}>
+          <td style={{padding:"10px",fontWeight:700,color:P.text}}>Year {d.year}</td>
+          <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.income)}</td>
+          <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.housing)}</td>
+          <td style={{padding:"10px",textAlign:"right",color:P.textSec,fontWeight:500}}>{money(d.ongoing)}</td>
+          <td style={{padding:"10px",textAlign:"right",color:d.extras>0?P.amber:P.textMute,fontWeight:500}}>{d.extras>0?money(d.extras):"—"}</td>
+          <td style={{padding:"10px",textAlign:"right",color:P.text,fontWeight:600}}>{money(d.totalOut)}</td>
+          <td style={{padding:"10px",textAlign:"right",fontWeight:700,color:d.surplus>=0?P.green:P.red}}>{signedMoney(d.surplus)}</td>
+          <td style={{padding:"10px",fontSize:11,color:P.textSec,maxWidth:200}}>{d.events.length>0?d.events.map(e=>`${e.label||e.type}${e.amount?` (${e.type==="rate_change"?e.amount+"%":"$"+Math.abs(e.amount).toLocaleString()})`:""}`).join(", "):"—"}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
+}
 export default function App(){
   const { instance, accounts } = useMsal();
   const isAuth = useIsAuthenticated();
@@ -311,8 +468,8 @@ export default function App(){
   const calc=useMemo(()=>cFS(state),[state]);
   const dC=calc.delta>0?P.red:calc.delta<0?P.green:P.textMute;
   const cfC=v=>v>0?P.green:v<0?P.red:P.textMute;
-  const viewTabs=[{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cashflow",i:"💰"},{v:"cv",l:"Current vs New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
-  const mobileTabs=[{v:"inputs",l:"Inputs",i:"✏️"},{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cash",i:"💰"},{v:"cv",l:"Cur/New",i:"⚖️"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
+  const viewTabs=[{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cashflow",i:"💰"},{v:"cv",l:"Current vs New",i:"⚖️"},{v:"tl",l:"Timeline",i:"📅"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
+  const mobileTabs=[{v:"inputs",l:"Inputs",i:"✏️"},{v:"delta",l:"Delta",i:"📊"},{v:"cashflow",l:"Cash",i:"💰"},{v:"cv",l:"Cur/New",i:"⚖️"},{v:"tl",l:"Timeline",i:"📅"},{v:"sc",l:"Compare",i:"📋"},{v:"eq",l:"Equiv",i:"🔄"}];
   const onMobileTab=(v)=>{setMobileTab(v);if(v!=="inputs")setView(v);};
   const isBuy=(state.scenarioMode||"buy")==="buy";
   const modeLabel=isBuy?"Purchase":"Rental";
@@ -391,6 +548,7 @@ export default function App(){
 
         {view==="sc"&&<CompareView scenarios={scenarios}/>}
         {view==="eq"&&<EquivView scenarios={scenarios}/>}
+        {view==="tl"&&<TimelineView baseCalc={calc} baseState={state}/>}
 
         {calc.loan>0&&isBuy&&["delta","cashflow","cv"].includes(view)&&<div style={{marginTop:20,padding:"14px 20px",background:P.bgCard,borderRadius:14,border:`1px solid ${P.border}`,display:"flex",flexWrap:"wrap",gap:"6px 28px",fontSize:12,color:P.textSec,fontWeight:500,boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><span>Loan: <strong style={{color:P.text}}>{money(calc.loan)}</strong></span><span>Down: <strong style={{color:P.text}}>{money(state.downPayment)}</strong> ({state.homePrice>0?((state.downPayment/state.homePrice)*100).toFixed(1):0}%)</span><span>Rate: <strong style={{color:P.text}}>{pF(state.rate)}</strong></span><span>Type: <strong style={{color:P.text}}>{state.mortgageType==="30fixed"?"30yr Fixed":"7/1 IO"}</strong></span></div>}
       </div>
